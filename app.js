@@ -1114,6 +1114,7 @@ function bindUi() {
 async function boot() {
   initMap();
   bindUi();
+  if (isMobileSheet()) setPanelExpanded(true);
   setStatus('Tap the map or search a ZIP, then select decor types.');
 }
 
