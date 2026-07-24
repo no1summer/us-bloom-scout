@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>US Bloom Scout — Fast Pikmin Bloom Decor Map</title>
-  <meta name="description" content="US-first Pikmin Bloom decor map. Instant ZIP 50010 cache — faster than Europe-hosted live Overpass tools." />
+  <meta name="description" content="US-first Pikmin Bloom decor map. Search any US ZIP or city — faster than Europe-hosted live Overpass tools." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -27,10 +27,10 @@
         </span>
         <div class="brand-text">
           <h1>US Bloom Scout</h1>
-          <p>Fast US decor map · Ames 50010 cache</p>
+          <p>Find Pikmin Bloom decor anywhere in the US</p>
         </div>
       </div>
-      <p class="brand-note">US-first · instant cache · ~100&nbsp;m</p>
+      <p class="brand-note">US-first · any ZIP · ~100&nbsp;m</p>
     </header>
 
     <main class="stage">
@@ -42,7 +42,7 @@
 
         <div class="search-row">
           <label class="sr-only" for="address">Search address</label>
-          <input id="address" type="search" placeholder="Search a city or address…" autocomplete="off" />
+          <input id="address" type="search" placeholder="US ZIP, city, or address…" autocomplete="off" />
           <button type="button" id="btn-locate" class="icon-btn" title="Use my location" aria-label="Use my location">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
@@ -58,18 +58,19 @@
         </div>
 
         <section class="mode-pane is-active" data-pane="nearby">
-          <p class="hint">US-first: starts in ZIP 50010 with a local cache (no slow overseas Overpass wait). Click the map to rescan ~100&nbsp;m.</p>
+          <p class="hint">Search any US ZIP or city, use your location, or click the map to scan ~100&nbsp;m for decor.</p>
           <button type="button" id="btn-scan" class="ghost-btn" disabled>Scan map center</button>
         </section>
 
         <section class="mode-pane" data-pane="browse">
-          <label class="field-label" for="decor-filter">Decor type (ZIP 50010)</label>
+          <label class="field-label" for="decor-filter">Decor type</label>
           <input id="decor-filter" type="search" placeholder="Filter: park, sushi, station…" />
           <div id="decor-grid" class="decor-grid" role="listbox" aria-label="Decor categories"></div>
           <div class="browse-actions">
-            <button type="button" id="btn-find" class="primary-btn" disabled>Show in 50010</button>
+            <button type="button" id="btn-find" class="primary-btn" disabled>Show in map view</button>
             <button type="button" id="btn-clear" class="ghost-btn">Clear</button>
           </div>
+          <p class="hint" style="margin-top:0.45rem">Pan/zoom to your area first (or search a ZIP), then show that decor type in view.</p>
         </section>
 
         <div class="status" id="status" aria-live="polite"></div>
@@ -81,7 +82,7 @@
         <ul id="results" class="results"></ul>
 
         <footer class="panel-foot">
-          Built US-first with a local ZIP cache so scans stay fast. OSM tags approximate in-game decor; Bloom may still differ.
+          US-first geocoding and map search. OSM tags approximate in-game decor; Bloom may still differ.
         </footer>
       </aside>
     </main>

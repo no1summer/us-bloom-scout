@@ -1,21 +1,13 @@
 /**
  * US Bloom Scout — US-first Pikmin Bloom decor finder
- * Local OSM cache for ZIP 50010 (Ames, IA) so US users skip slow live Overpass.
+ * Prefers US geocoding; optional local seed cache speeds some areas.
  */
 
-const HOME = {
-  zip: '50010',
-  // Downtown Ames (Main St) — denser POIs than the postcode centroid
-  lat: 42.025,
-  lon: -93.614,
-  label: 'US · 50010 Downtown Ames',
-  bbox: {
-    south: 41.9834204,
-    west: -93.6762780,
-    north: 42.0734814,
-    east: -93.5554840,
-  },
-  cacheUrl: 'data/ames-50010.json',
+const DEFAULT = {
+  // Contiguous US midpoint — neutral start (not tied to one ZIP)
+  lat: 39.8283,
+  lon: -98.5795,
+  zoom: 5,
 };
 
 const OVERPASS_SERVERS = [
@@ -26,12 +18,14 @@ const OVERPASS_SERVERS = [
 
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
 const EARTH_R = 6371000;
+/** Soft cap so Overpass bbox queries stay responsive (~city-scale) */
+const MAX_BBOX_SPAN_DEG = 0.35;
 
 const queryCache = new Map();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-/** Local OSM snapshot for ZIP 50010 — loaded once at boot */
-let homeSnapshot = null;
+/** Optional seed cache (speeds one US area if present) — never required */
+let seedCache = null;
 
 let map;
 let markersLayer;
@@ -40,7 +34,9 @@ let rangeCircle;
 let mode = 'nearby';
 let selectedDecor = null;
 let activeAbort = null;
-let lastCenter = { lat: HOME.lat, lon: HOME.lon };
+let lastCenter = { lat: DEFAULT.lat, lon: DEFAULT.lon };
+/** Active search/area label for status messages */
+let activeAreaLabel = 'map view';
 let lastResults = [];
 
 const $ = (sel) => document.querySelector(sel);
@@ -54,11 +50,6 @@ function haversine(lat1, lon1, lat2, lon2) {
       Math.cos((lat2 * Math.PI) / 180) *
       Math.sin(dLon / 2) ** 2;
   return Math.round(EARTH_R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-}
-
-function inHomeBbox(lat, lon) {
-  const b = HOME.bbox;
-  return lat >= b.south && lat <= b.north && lon >= b.west && lon <= b.east;
 }
 
 function setStatus(msg, busy = false) {
@@ -78,26 +69,72 @@ function placeName(tags = {}) {
   return tags.name || tags['name:en'] || tags.brand || tags.operator || 'Unnamed place';
 }
 
-async function loadHomeSnapshot() {
-  const res = await fetch(HOME.cacheUrl, { cache: 'force-cache' });
-  if (!res.ok) throw new Error(`Cache HTTP ${res.status}`);
-  homeSnapshot = await res.json();
-  return homeSnapshot;
+function inBbox(lat, lon, bbox) {
+  if (!bbox) return false;
+  return lat >= bbox.south && lat <= bbox.north && lon >= bbox.west && lon <= bbox.east;
 }
 
-function filterSnapshotAround(lat, lon, radiusM) {
-  if (!homeSnapshot?.elements) return [];
-  return homeSnapshot.elements.filter((el) => {
+function clampBbox(bbox) {
+  let { south, west, north, east } = bbox;
+  const latSpan = north - south;
+  const lonSpan = east - west;
+  if (latSpan > MAX_BBOX_SPAN_DEG) {
+    const mid = (south + north) / 2;
+    south = mid - MAX_BBOX_SPAN_DEG / 2;
+    north = mid + MAX_BBOX_SPAN_DEG / 2;
+  }
+  if (lonSpan > MAX_BBOX_SPAN_DEG) {
+    const mid = (west + east) / 2;
+    west = mid - MAX_BBOX_SPAN_DEG / 2;
+    east = mid + MAX_BBOX_SPAN_DEG / 2;
+  }
+  return { south, west, north, east };
+}
+
+function mapViewportBbox() {
+  const b = map.getBounds();
+  return clampBbox({
+    south: b.getSouth(),
+    west: b.getWest(),
+    north: b.getNorth(),
+    east: b.getEast(),
+  });
+}
+
+async function loadSeedCache() {
+  try {
+    const res = await fetch('data/seed-cache.json', { cache: 'force-cache' });
+    if (!res.ok) return null;
+    seedCache = await res.json();
+    return seedCache;
+  } catch {
+    return null;
+  }
+}
+
+function filterSeedAround(lat, lon, radiusM) {
+  if (!seedCache?.elements || !seedCache.bbox) return null;
+  if (!inBbox(lat, lon, seedCache.bbox)) return null;
+  return seedCache.elements.filter((el) => {
     const pos = elementLatLon(el);
     if (!pos || !el.tags) return false;
     return haversine(lat, lon, pos.lat, pos.lon) <= radiusM;
   });
 }
 
-function filterSnapshotByDecor(decorName) {
-  if (!homeSnapshot?.elements) return [];
-  return homeSnapshot.elements.filter((el) => {
-    if (!el.tags) return false;
+function filterSeedByDecorInBbox(decorName, bbox) {
+  if (!seedCache?.elements || !seedCache.bbox) return null;
+  // Only use seed when viewport overlaps seed area substantially
+  const overlap =
+    bbox.south < seedCache.bbox.north &&
+    bbox.north > seedCache.bbox.south &&
+    bbox.west < seedCache.bbox.east &&
+    bbox.east > seedCache.bbox.west;
+  if (!overlap) return null;
+  return seedCache.elements.filter((el) => {
+    const pos = elementLatLon(el);
+    if (!pos || !el.tags) return false;
+    if (!inBbox(pos.lat, pos.lon, bbox)) return false;
     return matchDecorCategories(el.tags).some((d) => d.name === decorName);
   });
 }
@@ -141,19 +178,57 @@ async function queryOverpass(query, { timeoutMs = 28000, signal } = {}) {
   throw lastError || new Error('Overpass failed');
 }
 
+/** US-preferring geocode; ZIP codes use postalcode lookup */
 async function geocode(q) {
+  const trimmed = q.trim();
   const url = new URL(`${NOMINATIM}/search`);
   url.searchParams.set('format', 'json');
   url.searchParams.set('limit', '1');
-  url.searchParams.set('q', q);
-  const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+  url.searchParams.set('addressdetails', '1');
+
+  const zipMatch = trimmed.match(/^(\d{5})(?:-\d{4})?$/);
+  if (zipMatch) {
+    url.searchParams.set('postalcode', zipMatch[1]);
+    url.searchParams.set('countrycodes', 'us');
+  } else {
+    url.searchParams.set('q', trimmed);
+    url.searchParams.set('countrycodes', 'us');
+  }
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      Accept: 'application/json',
+      'Accept-Language': 'en-US',
+    },
+  });
   if (!res.ok) throw new Error('Geocode failed');
-  const data = await res.json();
+  let data = await res.json();
+
+  // Fallback without country filter if US-restricted search misses
+  if (!data.length && !zipMatch) {
+    const url2 = new URL(`${NOMINATIM}/search`);
+    url2.searchParams.set('format', 'json');
+    url2.searchParams.set('limit', '1');
+    url2.searchParams.set('q', trimmed);
+    const res2 = await fetch(url2.toString(), { headers: { Accept: 'application/json' } });
+    if (res2.ok) data = await res2.json();
+  }
+
   if (!data.length) return null;
+  const hit = data[0];
+  const bb = hit.boundingbox; // [south, north, west, east]
   return {
-    lat: parseFloat(data[0].lat),
-    lon: parseFloat(data[0].lon),
-    label: data[0].display_name,
+    lat: parseFloat(hit.lat),
+    lon: parseFloat(hit.lon),
+    label: hit.display_name,
+    bbox: bb
+      ? {
+          south: parseFloat(bb[0]),
+          north: parseFloat(bb[1]),
+          west: parseFloat(bb[2]),
+          east: parseFloat(bb[3]),
+        }
+      : null,
   };
 }
 
@@ -163,8 +238,8 @@ function cancelInFlight() {
   return activeAbort.signal;
 }
 
-function clearMapOverlays() {
-  markersLayer.clearLayers();
+function clearMapOverlays({ keepMarkers = false } = {}) {
+  if (!keepMarkers) markersLayer.clearLayers();
   if (centerMarker) {
     map.removeLayer(centerMarker);
     centerMarker = null;
@@ -286,39 +361,27 @@ function plotResults(items) {
 }
 
 async function fetchNearbyElements(lat, lon, signal) {
-  // Instant path: filter preloaded ZIP 50010 snapshot
-  if (homeSnapshot && inHomeBbox(lat, lon)) {
-    return {
-      elements: filterSnapshotAround(lat, lon, DETECTOR_RANGE),
-      source: 'local-50010',
-    };
-  }
+  const seeded = filterSeedAround(lat, lon, DETECTOR_RANGE);
+  if (seeded) return { elements: seeded, source: 'cache' };
   const query = buildOverpassQuery(lat, lon, DETECTOR_RANGE);
   const elements = await queryOverpass(query, { signal, timeoutMs: 25000 });
-  return { elements, source: 'overpass' };
+  return { elements, source: 'live' };
 }
 
-async function scanNearby(lat, lon, { fly = true } = {}) {
+async function scanNearby(lat, lon, { fly = true, zoom = 16 } = {}) {
   const signal = cancelInFlight();
-  setScanCenter(lat, lon, { fly, zoom: 16 });
-  const local = homeSnapshot && inHomeBbox(lat, lon);
-  setStatus(
-    local
-      ? `Scanning ${DETECTOR_RANGE} m · US cache ${HOME.zip} (instant)…`
-      : `Scanning ${DETECTOR_RANGE} m · live Overpass (slower outside US cache)…`,
-    true
-  );
+  setScanCenter(lat, lon, { fly, zoom });
+  setStatus(`Scanning ${DETECTOR_RANGE} m for decor…`, true);
   try {
     const { elements, source } = await fetchNearbyElements(lat, lon, signal);
     const items = elementsToResults(elements, { lat, lon });
     plotResults(items);
     renderResults(items);
-    const srcNote =
-      source === 'local-50010' ? ' · US instant cache' : ' · live Overpass';
+    const note = source === 'cache' ? ' · cached' : '';
     setStatus(
       items.length
-        ? `Found ${items.length} decor spot${items.length === 1 ? '' : 's'}${srcNote}.`
-        : `No mapped decor in detector range${srcNote}.`
+        ? `Found ${items.length} decor spot${items.length === 1 ? '' : 's'}${note}.`
+        : `No mapped decor within ${DETECTOR_RANGE} m.`
     );
   } catch (err) {
     if (err.name === 'AbortError') return;
@@ -327,42 +390,49 @@ async function scanNearby(lat, lon, { fly = true } = {}) {
   }
 }
 
-async function browseDecorInHomeZip(decorName) {
-  cancelInFlight();
+/** Find selected decor in the current map view (any ZIP / city / pan) */
+async function browseDecorInView(decorName) {
+  const signal = cancelInFlight();
   const decor = DECOR_MAPPINGS.find((d) => d.name === decorName);
   if (!decor) return;
 
-  setStatus(`Finding ${decorName} in ZIP ${HOME.zip}…`, true);
-  clearMapOverlays();
+  const bbox = mapViewportBbox();
+  setStatus(`Finding ${decorName} in current map view…`, true);
+  clearMapOverlays({ keepMarkers: false });
 
-  let elements;
-  if (homeSnapshot) {
-    elements = filterSnapshotByDecor(decorName);
-  } else {
-    const signal = activeAbort.signal;
-    const { south, west, north, east } = HOME.bbox;
-    const query = buildOverpassBboxQuery(south, west, north, east, decorName);
-    elements = await queryOverpass(query, { signal, timeoutMs: 30000 });
-  }
+  try {
+    let elements = filterSeedByDecorInBbox(decorName, bbox);
+    let source = 'cache';
+    if (!elements) {
+      const query = buildOverpassBboxQuery(bbox.south, bbox.west, bbox.north, bbox.east, decorName);
+      elements = await queryOverpass(query, { signal, timeoutMs: 35000 });
+      source = 'live';
+    }
 
-  const items = elementsToResults(elements, lastCenter).filter((i) => i.decor.name === decorName);
-  plotResults(items);
-  renderResults(items);
+    const origin = map.getCenter();
+    const items = elementsToResults(elements, {
+      lat: origin.lat,
+      lon: origin.lng,
+    }).filter((i) => i.decor.name === decorName);
 
-  const { south, west, north, east } = HOME.bbox;
-  if (items.length) {
-    const group = L.featureGroup(items.map((i) => i.marker));
-    map.fitBounds(group.getBounds().pad(0.12), { maxZoom: 15, animate: true });
-    setStatus(`${items.length} ${decorName} location${items.length === 1 ? '' : 's'} in US ZIP ${HOME.zip} · instant cache.`);
-  } else {
-    map.fitBounds(
-      [
-        [south, west],
-        [north, east],
-      ],
-      { padding: [24, 24] }
-    );
-    setStatus(`No ${decorName} spots tagged in ZIP ${HOME.zip} on OSM.`);
+    plotResults(items);
+    renderResults(items);
+
+    if (items.length) {
+      const group = L.featureGroup(items.map((i) => i.marker));
+      map.fitBounds(group.getBounds().pad(0.12), { maxZoom: 15, animate: true });
+      setStatus(
+        `${items.length} ${decorName} location${items.length === 1 ? '' : 's'} in view` +
+          (source === 'cache' ? ' · cached' : '') +
+          `.`
+      );
+    } else {
+      setStatus(`No ${decorName} spots tagged in this map view on OSM.`);
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    console.error(err);
+    setStatus('Browse request failed. Zoom in a bit and try again.');
   }
 }
 
@@ -409,7 +479,7 @@ function initMap() {
   map = L.map('map', {
     zoomControl: false,
     attributionControl: true,
-  }).setView([HOME.lat, HOME.lon], 14);
+  }).setView([DEFAULT.lat, DEFAULT.lon], DEFAULT.zoom);
 
   L.control.zoom({ position: 'topright' }).addTo(map);
 
@@ -421,22 +491,11 @@ function initMap() {
 
   markersLayer = L.layerGroup().addTo(map);
 
-  L.rectangle(
-    [
-      [HOME.bbox.south, HOME.bbox.west],
-      [HOME.bbox.north, HOME.bbox.east],
-    ],
-    {
-      color: '#3f9a45',
-      weight: 1.5,
-      dashArray: '6 6',
-      fillOpacity: 0.03,
-      interactive: false,
-    }
-  ).addTo(map);
-
   map.on('click', (e) => {
-    if (mode === 'nearby') scanNearby(e.latlng.lat, e.latlng.lng);
+    if (mode === 'nearby') {
+      activeAreaLabel = 'map pin';
+      scanNearby(e.latlng.lat, e.latlng.lng);
+    }
   });
 }
 
@@ -450,7 +509,7 @@ function bindUi() {
   $('#decor-filter').addEventListener('input', (e) => buildDecorGrid(e.target.value));
 
   $('#btn-find').addEventListener('click', () => {
-    if (selectedDecor) browseDecorInHomeZip(selectedDecor);
+    if (selectedDecor) browseDecorInView(selectedDecor);
   });
 
   $('#btn-clear').addEventListener('click', () => {
@@ -460,30 +519,39 @@ function bindUi() {
     buildDecorGrid($('#decor-filter').value);
     clearMapOverlays();
     renderResults([]);
-    setStatus(`Cleared. Home area is ZIP ${HOME.zip}.`);
-    map.flyTo([HOME.lat, HOME.lon], 14, { duration: 0.45 });
+    setStatus('Cleared. Search a ZIP or city, or click the map.');
   });
 
   $('#btn-scan').addEventListener('click', () => {
     const c = map.getCenter();
+    activeAreaLabel = 'map center';
     scanNearby(c.lat, c.lng);
   });
 
   const runSearch = async () => {
-    const q = $('#address').value.trim() || HOME.zip;
-    // Skip geocode round-trip for the home zip
-    if (/^\s*50010\s*$/.test(q) || q.toLowerCase() === 'ames' || q.toLowerCase() === 'ames, ia') {
-      await scanNearby(HOME.lat, HOME.lon);
+    const q = $('#address').value.trim();
+    if (!q) {
+      setStatus('Enter a US ZIP, city, or address.');
       return;
     }
     setStatus(`Looking up “${q}”…`, true);
     try {
       const hit = await geocode(q);
       if (!hit) {
-        setStatus('No matching place found.');
+        setStatus('No matching place found. Try a US ZIP (e.g. 78701) or city.');
         return;
       }
-      await scanNearby(hit.lat, hit.lon);
+      activeAreaLabel = hit.label;
+      if (hit.bbox) {
+        map.fitBounds(
+          [
+            [hit.bbox.south, hit.bbox.west],
+            [hit.bbox.north, hit.bbox.east],
+          ],
+          { padding: [28, 28], maxZoom: 15, animate: true }
+        );
+      }
+      await scanNearby(hit.lat, hit.lon, { fly: !hit.bbox, zoom: 15 });
     } catch (err) {
       console.error(err);
       setStatus('Address lookup failed.');
@@ -497,41 +565,43 @@ function bindUi() {
 
   $('#btn-locate').addEventListener('click', () => {
     if (!navigator.geolocation) {
-      setStatus('Geolocation not available — using 50010.');
-      scanNearby(HOME.lat, HOME.lon);
+      setStatus('Geolocation not available in this browser.');
       return;
     }
     setStatus('Getting your location…', true);
     navigator.geolocation.getCurrentPosition(
-      (pos) => scanNearby(pos.coords.latitude, pos.coords.longitude),
-      () => {
-        setStatus('Location blocked — falling back to 50010.');
-        scanNearby(HOME.lat, HOME.lon);
+      (pos) => {
+        activeAreaLabel = 'your location';
+        scanNearby(pos.coords.latitude, pos.coords.longitude);
       },
+      () => setStatus('Location permission blocked.'),
       { enableHighAccuracy: true, timeout: 8000 }
     );
   });
 
-  $('#address').value = HOME.zip;
-  $('#address').placeholder = `Search… (home: ${HOME.zip})`;
+  $('#address').value = '';
+  $('#address').placeholder = 'US ZIP, city, or address…';
 }
 
 async function boot() {
   initMap();
   bindUi();
-  setStatus(`Loading ${HOME.label} cache…`, true);
-  setScanCenter(HOME.lat, HOME.lon, { zoom: 15, fly: false });
+  setStatus('Search any US ZIP or city — or use your location.');
+  await loadSeedCache();
 
-  try {
-    await loadHomeSnapshot();
-    const n = homeSnapshot?.elements?.length ?? 0;
-    setStatus(`Cached ${n.toLocaleString()} OSM places for ${HOME.zip}.`);
-  } catch (err) {
-    console.warn('Local cache miss; live Overpass will be used.', err);
-    homeSnapshot = null;
+  // Prefer device location on first load when available
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        activeAreaLabel = 'your location';
+        scanNearby(pos.coords.latitude, pos.coords.longitude, { zoom: 15 });
+      },
+      () => {
+        /* stay on US overview until user searches */
+      },
+      { enableHighAccuracy: false, timeout: 4000 }
+    );
   }
-
-  await scanNearby(HOME.lat, HOME.lon, { fly: false });
 }
 
 boot();

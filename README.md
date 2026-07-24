@@ -2,34 +2,34 @@
 
 **Fast Pikmin Bloom decor finder built for the United States.**
 
-Most existing decor maps were built and hosted with Europe-first workflows. They query live Overpass on every click, which is often **slow or times out from the US**. This project flips that:
+Most existing decor maps were built with Europe-first workflows and query live Overpass on every click, which is often **slow or times out from the US**. This project is US-first:
 
-- **US-first default** — opens on ZIP **50010 (Ames, Iowa)** with a real downtown pin, not a random world map
-- **Instant local cache** — preloads OSM places for the home ZIP so nearby scans and “find a decor” don’t wait on overseas Overpass round-trips
-- **Same decor logic** — OSM tags → in-game categories (restaurant, park, station, …), ~100&nbsp;m detector range
+- Search **any US ZIP, city, or address**
+- **Nearby** scan within ~100&nbsp;m (game detector range)
+- **Find a decor** lists that type in your **current map view** (pan/zoom or search first)
+- Geocoding prefers the US so ZIP codes resolve correctly
 
-Live site (after Pages is enabled): **https://no1summer.github.io/us-bloom-scout/**
+Live site: **https://no1summer.github.io/us-bloom-scout/**
 
 ## Why US-first?
 
 | | Typical prior maps | **US Bloom Scout** |
 |--|--|--|
-| Default region | Often EU / click-anywhere blank slate | United States (Ames · 50010) |
-| First load | Live Overpass every time | Bundled US ZIP snapshot → **instant** |
-| From US networks | Slow / 504 / rate limits common | Cache hit for home area; live API only outside it |
+| Default audience | Often EU-oriented | United States |
+| ZIP / city search | Generic / EU-biased geocoding | US-preferring Nominatim |
+| Live Overpass from US | Slow / 504 / rate limits common | Same APIs, plus request caching |
 
-Community tools this builds on (tag mappings, ideas): [bloom-decor-map](https://github.com/midwestindigoenjoyer/bloom-decor-map), [pixlpirate/pikmin-map](https://github.com/pixlpirate/pikmin-map), [Pikipedia Decor list](https://www.pikminwiki.com/Decor_Pikmin).
+Tag mappings build on community work: [bloom-decor-map](https://github.com/midwestindigoenjoyer/bloom-decor-map), [pixlpirate/pikmin-map](https://github.com/pixlpirate/pikmin-map), [Pikipedia](https://www.pikminwiki.com/Decor_Pikmin).
 
 ## How it works
 
-1. Land on downtown Ames (or search any US address).
-2. **Nearby all** — decor within ~100&nbsp;m of the pin (cached inside 50010).
-3. **Find a decor** — pick a type (Park, Sushi, Station, …) and list every match in the cached ZIP instantly.
-4. Outside the cached bbox, the app falls back to live Overpass (slower).
+1. Search a ZIP (e.g. `78701`) or city, or use **my location**.
+2. **Nearby all** — decor within ~100&nbsp;m of the pin.
+3. **Find a decor** — pick a type, then **Show in map view** to list matches in the visible area.
 
 ## Accuracy
 
-Uses OSM data (cached + live). Pikmin Bloom also pulls other sources and may use older OSM snapshots, so results can differ from the game.
+Uses OpenStreetMap data. Pikmin Bloom also pulls other sources and may use older OSM snapshots, so results can differ from the game.
 
 ## Local development
 
@@ -37,21 +37,6 @@ Uses OSM data (cached + live). Pikmin Bloom also pulls other sources and may use
 python3 -m http.server 8765
 # open http://127.0.0.1:8765/
 ```
-
-## Files
-
-| Path | Purpose |
-|------|---------|
-| `index.html` | App shell |
-| `app.js` | Map UI, US cache path, Overpass fallback |
-| `decor-mappings.js` | Decor category ↔ OSM tags |
-| `styles.css` | Layout / theme |
-| `data/ames-50010.json` | Preloaded US OSM snapshot (ZIP 50010) |
-| `bloom-scout-standalone.html` | Single-file build with cache inlined |
-
-## Extending to more US cities
-
-Drop another `data/<zip>.json` snapshot and point `HOME` in `app.js` at it — same instant path, no Europe-roundtrip required.
 
 ## License
 
