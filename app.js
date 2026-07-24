@@ -515,9 +515,9 @@ function escapeHtml(s) {
 
 /**
  * Pure = only decor place in its smallest local region.
+ * Neighbors include every fetched type (selected + Roadside context).
  * The region radius is min(distance to nearest other result, DETECTOR_RANGE).
- * A spot is pure when nothing else (any type) sits inside that smallest cell —
- * i.e. it is the sole spot in its local neighborhood.
+ * A spot is pure when nothing else sits inside that cell.
  * Rank: most isolated first (largest empty radius around them).
  */
 function annotatePureSpots(items) {
@@ -690,12 +690,17 @@ async function browseDecorInView(decorNames) {
 
   const t0 = performance.now();
   try {
+    // Always pull Roadside candidates too — they contaminate "pure" spots even
+    // when Roadside isn't selected (in-game fallback POIs near your target).
+    const queryNames = names.includes('Roadside')
+      ? names
+      : [...names, 'Roadside'];
     const query = buildFastBboxQuery(
       bbox.south,
       bbox.west,
       bbox.north,
       bbox.east,
-      names
+      queryNames
     );
     if (!query) {
       setStatus('No decor types selected.');
@@ -708,10 +713,12 @@ async function browseDecorInView(decorNames) {
       lat: (bbox.south + bbox.north) / 2,
       lon: (bbox.west + bbox.east) / 2,
     };
-    let items = elementsToResults(elements, origin).filter((i) =>
-      nameSet.has(i.decor.name)
+    // Annotate purity against all fetched neighbors (incl. Roadside), then show selected
+    const allItems = elementsToResults(elements, origin).filter(
+      (i) => nameSet.has(i.decor.name) || i.decor.name === 'Roadside'
     );
-    annotatePureSpots(items);
+    annotatePureSpots(allItems);
+    let items = allItems.filter((i) => nameSet.has(i.decor.name));
 
     const pureOnly = $('#pure-only')?.checked;
     if (pureOnly) items = items.filter((i) => i.pure);

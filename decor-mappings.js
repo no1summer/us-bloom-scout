@@ -471,6 +471,71 @@ const DECOR_MAPPINGS = [
       [{ key: 'building', value: 'temple'  }, { key: 'religion', value: 'shinto'   }],
       [{ key: 'building', value: 'temple'  }, { key: 'religion', value: 'buddhist' }],
     ]
+  },
+
+  // ========== FALLBACK ==========
+  // In-game Roadside = named place that does NOT match a specific decor category.
+  // We approximate common residual POIs; matchDecorCategories only assigns
+  // Roadside when no other mapped type matched (and the place has a name).
+  {
+    name: 'Roadside',
+    costume: 'Sticker / Coin',
+    icon: '🪧',
+    image: 'Decor Roadside Sticker.png',
+    mapIcon: 'MapIcon_Roadside.png',
+    color: '#78909C',
+    isResidual: true,
+    tags: [
+      { key: 'amenity', value: 'bank' },
+      { key: 'amenity', value: 'fuel' },
+      { key: 'amenity', value: 'charging_station' },
+      { key: 'amenity', value: 'school' },
+      { key: 'amenity', value: 'kindergarten' },
+      { key: 'amenity', value: 'college' },
+      { key: 'amenity', value: 'place_of_worship' },
+      { key: 'amenity', value: 'community_centre' },
+      { key: 'amenity', value: 'townhall' },
+      { key: 'amenity', value: 'courthouse' },
+      { key: 'amenity', value: 'fire_station' },
+      { key: 'amenity', value: 'police' },
+      { key: 'amenity', value: 'hospital' },
+      { key: 'amenity', value: 'clinic' },
+      { key: 'amenity', value: 'dentists' },
+      { key: 'amenity', value: 'dentist' },
+      { key: 'amenity', value: 'doctors' },
+      { key: 'amenity', value: 'veterinary' },
+      { key: 'amenity', value: 'car_wash' },
+      { key: 'amenity', value: 'car_rental' },
+      { key: 'amenity', value: 'marketplace' },
+      { key: 'amenity', value: 'social_facility' },
+      { key: 'amenity', value: 'shelter' },
+      { key: 'shop', value: 'gift' },
+      { key: 'shop', value: 'florist' },
+      { key: 'shop', value: 'bicycle' },
+      { key: 'shop', value: 'car' },
+      { key: 'shop', value: 'car_repair' },
+      { key: 'shop', value: 'furniture' },
+      { key: 'shop', value: 'pet' },
+      { key: 'shop', value: 'mobile_phone' },
+      { key: 'shop', value: 'optician' },
+      { key: 'shop', value: 'alcohol' },
+      { key: 'shop', value: 'wine' },
+      { key: 'shop', value: 'butcher' },
+      { key: 'shop', value: 'greengrocer' },
+      { key: 'shop', value: 'deli' },
+      { key: 'shop', value: 'tobacco' },
+      { key: 'shop', value: 'newsagent' },
+      { key: 'shop', value: 'travel_agency' },
+      { key: 'shop', value: 'yes' },
+      { key: 'tourism', value: 'attraction' },
+      { key: 'tourism', value: 'information' },
+      { key: 'leisure', value: 'playground' },
+      { key: 'leisure', value: 'sports_centre' },
+      { key: 'leisure', value: 'fitness_centre' },
+      { key: 'leisure', value: 'pitch' },
+      { key: 'highway', value: 'rest_area' },
+      { key: 'highway', value: 'services' }
+    ]
   }
 ];
 
@@ -522,6 +587,9 @@ out center tags qt;
  * Match OSM element tags to ALL matching decor categories.
  * Returns an array of all decor types that match (supports double/multi-decor).
  * Handles semicolon-delimited OSM values (e.g. cuisine=pizza;burger).
+ *
+ * Roadside is residual: only assigned when nothing else matched and the place
+ * has a name (in-game sticker letter comes from that name).
  */
 function matchDecorCategories(tags) {
   // Expand semicolon-delimited OSM values into flat key→[values] map
@@ -532,33 +600,32 @@ function matchDecorCategories(tags) {
     }
   }
 
-  const matches = [];
-  for (const decor of DECOR_MAPPINGS) {
-    let matched = false;
-
-    // Simple OR tags: any single tag match is enough
+  const matchesSpecific = (decor) => {
     for (const decorTag of (decor.tags || [])) {
       const tagValues = expandedValues[decorTag.key];
-      if (tagValues && tagValues.includes(decorTag.value)) {
-        matched = true;
-        break;
-      }
+      if (tagValues && tagValues.includes(decorTag.value)) return true;
     }
-
-    // Compound AND tag groups: every tag in a group must match; groups are OR'd
-    if (!matched) {
-      for (const group of (decor.tagGroups || [])) {
-        if (group.every(t => {
-          const vals = expandedValues[t.key];
-          return vals && vals.includes(t.value);
-        })) {
-          matched = true;
-          break;
-        }
-      }
+    for (const group of (decor.tagGroups || [])) {
+      if (group.every(t => {
+        const vals = expandedValues[t.key];
+        return vals && vals.includes(t.value);
+      })) return true;
     }
+    return false;
+  };
 
-    if (matched) matches.push(decor);
+  const matches = [];
+  for (const decor of DECOR_MAPPINGS) {
+    if (decor.isResidual) continue;
+    if (matchesSpecific(decor)) matches.push(decor);
+  }
+
+  if (matches.length === 0) {
+    const roadside = DECOR_MAPPINGS.find((d) => d.isResidual);
+    const hasName = !!(tags.name || tags['name:en'] || tags.brand || tags.operator);
+    if (roadside && hasName && matchesSpecific(roadside)) {
+      matches.push(roadside);
+    }
   }
   return matches;
 }
