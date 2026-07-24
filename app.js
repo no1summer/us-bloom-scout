@@ -648,22 +648,53 @@ async function browseDecorInView(decorNames) {
 
 function buildDecorGrid(filter = '') {
   const grid = $('#decor-grid');
+  const empty = $('#decor-empty');
+  const selectedWrap = $('#decor-selected');
   const q = filter.trim().toLowerCase();
   grid.innerHTML = '';
-  DECOR_MAPPINGS.filter((d) => {
+
+  // Selected pills (easy to see / remove on phone)
+  if (selectedWrap) {
+    selectedWrap.innerHTML = '';
+    if (selectedDecors.size === 0) {
+      selectedWrap.hidden = true;
+    } else {
+      selectedWrap.hidden = false;
+      [...selectedDecors].forEach((name) => {
+        const decor = DECOR_MAPPINGS.find((d) => d.name === name);
+        const pill = document.createElement('button');
+        pill.type = 'button';
+        pill.className = 'decor-pill';
+        pill.title = 'Remove ' + name;
+        pill.innerHTML = `${decor?.icon || ''} ${name} <span class="x">×</span>`;
+        pill.addEventListener('click', () => {
+          selectedDecors.delete(name);
+          updateFindButton();
+          buildDecorGrid($('#decor-filter').value);
+        });
+        selectedWrap.appendChild(pill);
+      });
+    }
+  }
+
+  const matches = DECOR_MAPPINGS.filter((d) => {
     if (!q) return true;
     return (
       d.name.toLowerCase().includes(q) ||
       (d.costume && d.costume.toLowerCase().includes(q))
     );
-  }).forEach((d) => {
+  });
+
+  if (empty) empty.hidden = matches.length > 0;
+
+  matches.forEach((d) => {
     const on = selectedDecors.has(d.name);
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'decor-chip' + (on ? ' is-selected' : '');
     btn.setAttribute('role', 'option');
     btn.setAttribute('aria-selected', on ? 'true' : 'false');
-    btn.title = (d.costume || d.name) + ' — click to toggle';
+    btn.title = (d.costume || d.name) + ' — tap to toggle';
     btn.innerHTML = `<span class="swatch" style="background:${d.color}"></span><span class="name">${d.icon} ${d.name}</span>`;
     btn.addEventListener('click', () => {
       if (selectedDecors.has(d.name)) selectedDecors.delete(d.name);
@@ -848,6 +879,14 @@ function bindUi() {
   bindPanelSheet();
 
   $('#decor-filter').addEventListener('input', (e) => buildDecorGrid(e.target.value));
+  $('#decor-filter').addEventListener('focus', () => {
+    // Expand sheet so the filtered list isn't clipped by the keyboard/sheet
+    if (window.matchMedia('(max-width: 820px)').matches) {
+      $('#panel')?.classList.add('is-expanded');
+      $('#panel-handle')?.setAttribute('aria-expanded', 'true');
+      setTimeout(refreshMapSize, 280);
+    }
+  });
 
   $('#btn-find').addEventListener('click', () => {
     if (selectedDecors.size) {

@@ -71,9 +71,22 @@
 
           <p class="hint">Tap or pan the map to set the ZIP, multi-select decor, then Show in area.</p>
 
-          <label class="field-label" for="decor-filter">Decor types (multi-select)</label>
-          <input id="decor-filter" type="search" placeholder="Filter: park, sushi, station…" autocomplete="off" />
-          <div id="decor-grid" class="decor-grid" role="listbox" aria-multiselectable="true" aria-label="Decor categories"></div>
+          <div class="decor-picker" id="decor-picker">
+            <label class="field-label" for="decor-filter">Decor types (multi-select)</label>
+            <input
+              id="decor-filter"
+              type="text"
+              inputmode="search"
+              enterkeyhint="search"
+              placeholder="Search types: park, sushi…"
+              autocomplete="off"
+              autocorrect="off"
+              spellcheck="false"
+            />
+            <div id="decor-selected" class="decor-selected" hidden></div>
+            <div id="decor-grid" class="decor-grid" role="listbox" aria-multiselectable="true" aria-label="Decor categories"></div>
+            <p id="decor-empty" class="decor-empty" hidden>No types match that search.</p>
+          </div>
           <div class="browse-actions">
             <button type="button" id="btn-find" class="primary-btn" disabled>Show in area</button>
             <button type="button" id="btn-clear" class="ghost-btn">Clear</button>
