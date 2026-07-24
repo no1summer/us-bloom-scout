@@ -322,14 +322,26 @@ input[type="search"]:focus {
   border-radius: 16px;
   background: rgba(255,255,255,0.55);
   padding: 0.65rem;
-  /* Keep chips from painting outside the sheet */
   overflow: hidden;
-  contain: layout paint;
+  /* Prefer flex grow so chips keep a usable tap area */
+  flex: 1 1 auto;
 }
 
 .decor-picker #decor-filter {
   font-size: 16px;
   padding: 0.65rem 0.75rem;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.9);
+  border-radius: 12px;
+  font: inherit;
+  color: var(--ink);
+  outline: none;
+  flex: 0 0 auto;
+}
+.decor-picker #decor-filter:focus {
+  border-color: var(--leaf);
+  box-shadow: 0 0 0 3px rgba(63,154,69,0.18);
 }
 
 .decor-selected {
@@ -339,6 +351,7 @@ input[type="search"]:focus {
   max-height: 4.5rem;
   overflow: auto;
   overscroll-behavior: contain;
+  flex: 0 0 auto;
 }
 .decor-selected[hidden] { display: none !important; }
 
@@ -349,13 +362,16 @@ input[type="search"]:focus {
   max-width: 100%;
   border: none;
   border-radius: 999px;
-  padding: 0.3rem 0.55rem;
+  padding: 0.35rem 0.6rem;
   background: rgba(111,191,74,0.22);
   color: var(--leaf-deep);
   font: inherit;
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   font-weight: 600;
   cursor: pointer;
+  min-height: 36px;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .decor-pill .x { opacity: 0.7; font-weight: 700; }
 
@@ -364,13 +380,15 @@ input[type="search"]:focus {
   grid-template-columns: 1fr 1fr;
   gap: 0.4rem;
   max-height: 168px;
+  min-height: 120px;
   overflow-x: hidden;
   overflow-y: auto;
   margin: 0;
-  padding-right: 0.1rem;
+  padding: 0.1rem 0.15rem 0.25rem 0;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  touch-action: pan-y;
+  touch-action: manipulation;
+  flex: 1 1 auto;
 }
 .decor-empty {
   margin: 0;
@@ -386,16 +404,24 @@ input[type="search"]:focus {
   align-items: center;
   gap: 0.4rem;
   text-align: left;
-  min-height: 42px;
+  min-height: 48px;
   min-width: 0;
-  padding: 0.5rem 0.55rem;
+  padding: 0.55rem 0.6rem;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: rgba(255,255,255,0.9);
+  background: rgba(255,255,255,0.95);
   color: var(--ink);
-  font-size: 0.74rem;
+  font-size: 0.78rem;
   font-weight: 600;
   cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+  position: relative;
+  z-index: 1;
+}
+.decor-chip:active {
+  background: rgba(111,191,74,0.22);
 }
 .decor-chip .swatch {
   width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
@@ -412,6 +438,16 @@ input[type="search"]:focus {
   text-overflow: ellipsis;
 }
 
+.panel-dock {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.55rem 1rem calc(0.75rem + var(--safe-bottom));
+  border-top: 1px solid var(--line);
+  background: rgba(247, 252, 246, 0.98);
+  z-index: 4;
+}
 .browse-actions { display: grid; grid-template-columns: 1fr auto; gap: 0.4rem; }
 
 .pure-toggle {
@@ -600,58 +636,71 @@ input[type="search"]:focus {
     right: 0;
     bottom: 0;
     width: auto;
-    max-height: 42dvh;
+    /* Tall enough by default that decor chips are actually tappable */
+    max-height: min(72dvh, 640px);
     border-radius: 20px 20px 0 0;
     border-left: none;
     border-right: none;
     border-bottom: none;
-    padding-bottom: var(--safe-bottom);
+    padding-bottom: 0;
     transition: max-height 0.28s ease;
   }
   .panel.is-expanded {
-    max-height: min(82dvh, 920px);
+    max-height: min(88dvh, 920px);
   }
-  .panel-handle { display: block; }
+  .panel.is-collapsed {
+    max-height: 34dvh;
+  }
+  .panel-handle { display: block; flex: 0 0 auto; }
   .panel-scroll {
-    padding: 0.35rem 0.85rem calc(0.85rem + var(--safe-bottom));
-    /* One main scroller; keep picker self-contained */
+    padding: 0.25rem 0.85rem 0.5rem;
     overflow: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .panel-dock {
+    padding: 0.5rem 0.85rem calc(0.65rem + var(--safe-bottom));
+  }
+
+  .hint {
+    font-size: 0.72rem;
   }
 
   .decor-picker {
-    /* Cap the whole picker so chips never blow past the sheet */
-    max-height: min(38dvh, 280px);
-    flex: 0 1 auto;
-  }
-  .panel.is-expanded .decor-picker {
-    max-height: min(48dvh, 360px);
+    /* Must keep room for the chip list — this was collapsing to ~0px before */
+    flex: 1 1 auto;
+    min-height: 220px;
+    max-height: none;
   }
 
   .decor-grid {
     grid-template-columns: 1fr;
-    /* Fill remaining picker space; never unbounded */
     flex: 1 1 auto;
-    max-height: none;
-    min-height: 0;
+    min-height: 160px;
+    max-height: min(42dvh, 360px);
   }
 
   .leaflet-bottom.leaflet-right {
-    bottom: calc(42dvh + 8px);
+    bottom: calc(min(72dvh, 640px) + 8px);
     transition: bottom 0.28s ease;
   }
-  .panel.is-expanded ~ .leaflet-control-container .leaflet-bottom.leaflet-right,
   .stage:has(.panel.is-expanded) .leaflet-bottom.leaflet-right {
-    bottom: calc(min(82dvh, 920px) + 8px);
+    bottom: calc(min(88dvh, 920px) + 8px);
+  }
+  .stage:has(.panel.is-collapsed) .leaflet-bottom.leaflet-right {
+    bottom: calc(34dvh + 8px);
   }
 
-  /* Attribution: keep readable above sheet */
   .leaflet-control-attribution {
     max-width: 55vw;
     font-size: 9px !important;
-    margin-bottom: calc(42dvh + 4px) !important;
+    margin-bottom: calc(min(72dvh, 640px) + 4px) !important;
   }
   .stage:has(.panel.is-expanded) .leaflet-control-attribution {
-    margin-bottom: calc(min(82dvh, 920px) + 4px) !important;
+    margin-bottom: calc(min(88dvh, 920px) + 4px) !important;
+  }
+  .stage:has(.panel.is-collapsed) .leaflet-control-attribution {
+    margin-bottom: calc(34dvh + 4px) !important;
   }
 }
 
@@ -718,7 +767,7 @@ input[type="search"]:focus {
             <button type="button" id="btn-search" class="primary-btn">Go</button>
           </div>
 
-          <p class="hint">Tap or pan the map to set the ZIP, multi-select decor, then Show in area.</p>
+          <p class="hint">Tap the map for a ZIP, pick decor types below, then Show in area.</p>
 
           <div class="decor-picker" id="decor-picker">
             <label class="field-label" for="decor-filter">Decor types (multi-select)</label>
@@ -726,7 +775,7 @@ input[type="search"]:focus {
               id="decor-filter"
               type="text"
               inputmode="search"
-              enterkeyhint="search"
+              enterkeyhint="done"
               placeholder="Search types: park, sushi…"
               autocomplete="off"
               autocorrect="off"
@@ -736,14 +785,6 @@ input[type="search"]:focus {
             <div id="decor-grid" class="decor-grid" role="listbox" aria-multiselectable="true" aria-label="Decor categories"></div>
             <p id="decor-empty" class="decor-empty" hidden>No types match that search.</p>
           </div>
-          <div class="browse-actions">
-            <button type="button" id="btn-find" class="primary-btn" disabled>Show in area</button>
-            <button type="button" id="btn-clear" class="ghost-btn">Clear</button>
-          </div>
-          <label class="pure-toggle">
-            <input type="checkbox" id="pure-only" />
-            <span>Pure only <em>(sole spot in its smallest ~100&nbsp;m region)</em></span>
-          </label>
 
           <div class="status" id="status" aria-live="polite"></div>
 
@@ -768,6 +809,17 @@ input[type="search"]:focus {
           <footer class="panel-foot">
             US-first geocoding and map search. OSM tags approximate in-game decor; Bloom may still differ.
           </footer>
+        </div>
+
+        <div class="panel-dock" id="panel-dock">
+          <div class="browse-actions">
+            <button type="button" id="btn-find" class="primary-btn" disabled>Show in area</button>
+            <button type="button" id="btn-clear" class="ghost-btn">Clear</button>
+          </div>
+          <label class="pure-toggle">
+            <input type="checkbox" id="pure-only" />
+            <span>Pure only <em>(sole spot in its smallest ~100&nbsp;m region)</em></span>
+          </label>
         </div>
       </aside>
     </main>
@@ -2164,6 +2216,31 @@ async function browseDecorInView(decorNames) {
   }
 }
 
+function isMobileSheet() {
+  return window.matchMedia('(max-width: 820px)').matches;
+}
+
+function setPanelExpanded(open) {
+  const panel = $('#panel');
+  const handle = $('#panel-handle');
+  if (!panel) return;
+  panel.classList.toggle('is-expanded', !!open);
+  panel.classList.toggle('is-collapsed', !open);
+  handle?.setAttribute('aria-expanded', open ? 'true' : 'false');
+  setTimeout(refreshMapSize, 280);
+}
+
+function expandPanelForDecor() {
+  if (isMobileSheet()) setPanelExpanded(true);
+}
+
+function toggleDecor(name) {
+  if (selectedDecors.has(name)) selectedDecors.delete(name);
+  else selectedDecors.add(name);
+  updateFindButton();
+  buildDecorGrid($('#decor-filter')?.value || '');
+}
+
 function buildDecorGrid(filter = '') {
   const grid = $('#decor-grid');
   const empty = $('#decor-empty');
@@ -2185,7 +2262,9 @@ function buildDecorGrid(filter = '') {
         pill.className = 'decor-pill';
         pill.title = 'Remove ' + name;
         pill.innerHTML = `${decor?.icon || ''} ${name} <span class="x">×</span>`;
-        pill.addEventListener('click', () => {
+        pill.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
           selectedDecors.delete(name);
           updateFindButton();
           buildDecorGrid($('#decor-filter').value);
@@ -2214,11 +2293,33 @@ function buildDecorGrid(filter = '') {
     btn.setAttribute('aria-selected', on ? 'true' : 'false');
     btn.title = (d.costume || d.name) + ' — tap to toggle';
     btn.innerHTML = `<span class="swatch" style="background:${d.color}"></span><span class="name">${d.icon} ${d.name}</span>`;
-    btn.addEventListener('click', () => {
-      if (selectedDecors.has(d.name)) selectedDecors.delete(d.name);
-      else selectedDecors.add(d.name);
-      updateFindButton();
-      buildDecorGrid($('#decor-filter').value);
+
+    let down = null;
+    btn.addEventListener(
+      'pointerdown',
+      (e) => {
+        down = { x: e.clientX, y: e.clientY, id: e.pointerId };
+      },
+      { passive: true }
+    );
+    btn.addEventListener(
+      'pointerup',
+      (e) => {
+        if (!down || down.id !== e.pointerId) return;
+        const moved =
+          Math.abs(e.clientX - down.x) > 14 || Math.abs(e.clientY - down.y) > 14;
+        down = null;
+        if (moved) return; // scrolling the list, not a tap
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        expandPanelForDecor();
+        toggleDecor(d.name);
+      },
+      { passive: false }
+    );
+    btn.addEventListener('pointercancel', () => {
+      down = null;
     });
     grid.appendChild(btn);
   });
@@ -2252,10 +2353,9 @@ function initMap() {
     pauseAutoZip(1500);
     activeSearchBbox = areaAround(lat, lng);
     await syncZipFromLatLon(lat, lng, { quiet: false, placePin: true });
-    // On phones, peek the panel so status/ZIP is visible
-    if (window.matchMedia('(max-width: 820px)').matches) {
-      $('#panel')?.classList.remove('is-expanded');
-      $('#panel-handle')?.setAttribute('aria-expanded', 'false');
+    // Keep the sheet open so decor types stay tappable after setting a ZIP
+    if (isMobileSheet()) {
+      setPanelExpanded(true);
       refreshMapSize();
     }
   });
@@ -2356,9 +2456,8 @@ function bindPanelSheet() {
   if (!panel || !handle) return;
 
   const toggle = () => {
-    const open = panel.classList.toggle('is-expanded');
-    handle.setAttribute('aria-expanded', open ? 'true' : 'false');
-    setTimeout(refreshMapSize, 280);
+    const open = !panel.classList.contains('is-expanded');
+    setPanelExpanded(open);
   };
   handle.addEventListener('click', toggle);
 
@@ -2377,16 +2476,16 @@ function bindPanelSheet() {
       if (startY == null) return;
       const dy = e.changedTouches[0].clientY - startY;
       startY = null;
-      if (dy < -28) {
-        panel.classList.add('is-expanded');
-        handle.setAttribute('aria-expanded', 'true');
-        setTimeout(refreshMapSize, 280);
-      } else if (dy > 28) {
-        panel.classList.remove('is-expanded');
-        handle.setAttribute('aria-expanded', 'false');
-        setTimeout(refreshMapSize, 280);
-      }
+      if (dy < -28) setPanelExpanded(true);
+      else if (dy > 28) setPanelExpanded(false);
     },
+    { passive: true }
+  );
+
+  // Expanding when the user starts picking types
+  $('#decor-picker')?.addEventListener(
+    'pointerdown',
+    () => expandPanelForDecor(),
     { passive: true }
   );
 }
@@ -2397,22 +2496,11 @@ function bindUi() {
   bindPanelSheet();
 
   $('#decor-filter').addEventListener('input', (e) => buildDecorGrid(e.target.value));
-  $('#decor-filter').addEventListener('focus', () => {
-    // Expand sheet so the filtered list isn't clipped by the keyboard/sheet
-    if (window.matchMedia('(max-width: 820px)').matches) {
-      $('#panel')?.classList.add('is-expanded');
-      $('#panel-handle')?.setAttribute('aria-expanded', 'true');
-      setTimeout(refreshMapSize, 280);
-    }
-  });
+  $('#decor-filter').addEventListener('focus', () => expandPanelForDecor());
 
   $('#btn-find').addEventListener('click', () => {
     if (selectedDecors.size) {
-      if (window.matchMedia('(max-width: 820px)').matches) {
-        $('#panel')?.classList.add('is-expanded');
-        $('#panel-handle')?.setAttribute('aria-expanded', 'true');
-        setTimeout(refreshMapSize, 280);
-      }
+      expandPanelForDecor();
       browseDecorInView(selectedDecors);
     }
   });

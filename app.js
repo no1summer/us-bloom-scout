@@ -743,6 +743,31 @@ async function browseDecorInView(decorNames) {
   }
 }
 
+function isMobileSheet() {
+  return window.matchMedia('(max-width: 820px)').matches;
+}
+
+function setPanelExpanded(open) {
+  const panel = $('#panel');
+  const handle = $('#panel-handle');
+  if (!panel) return;
+  panel.classList.toggle('is-expanded', !!open);
+  panel.classList.toggle('is-collapsed', !open);
+  handle?.setAttribute('aria-expanded', open ? 'true' : 'false');
+  setTimeout(refreshMapSize, 280);
+}
+
+function expandPanelForDecor() {
+  if (isMobileSheet()) setPanelExpanded(true);
+}
+
+function toggleDecor(name) {
+  if (selectedDecors.has(name)) selectedDecors.delete(name);
+  else selectedDecors.add(name);
+  updateFindButton();
+  buildDecorGrid($('#decor-filter')?.value || '');
+}
+
 function buildDecorGrid(filter = '') {
   const grid = $('#decor-grid');
   const empty = $('#decor-empty');
@@ -764,7 +789,9 @@ function buildDecorGrid(filter = '') {
         pill.className = 'decor-pill';
         pill.title = 'Remove ' + name;
         pill.innerHTML = `${decor?.icon || ''} ${name} <span class="x">×</span>`;
-        pill.addEventListener('click', () => {
+        pill.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
           selectedDecors.delete(name);
           updateFindButton();
           buildDecorGrid($('#decor-filter').value);
@@ -793,11 +820,33 @@ function buildDecorGrid(filter = '') {
     btn.setAttribute('aria-selected', on ? 'true' : 'false');
     btn.title = (d.costume || d.name) + ' — tap to toggle';
     btn.innerHTML = `<span class="swatch" style="background:${d.color}"></span><span class="name">${d.icon} ${d.name}</span>`;
-    btn.addEventListener('click', () => {
-      if (selectedDecors.has(d.name)) selectedDecors.delete(d.name);
-      else selectedDecors.add(d.name);
-      updateFindButton();
-      buildDecorGrid($('#decor-filter').value);
+
+    let down = null;
+    btn.addEventListener(
+      'pointerdown',
+      (e) => {
+        down = { x: e.clientX, y: e.clientY, id: e.pointerId };
+      },
+      { passive: true }
+    );
+    btn.addEventListener(
+      'pointerup',
+      (e) => {
+        if (!down || down.id !== e.pointerId) return;
+        const moved =
+          Math.abs(e.clientX - down.x) > 14 || Math.abs(e.clientY - down.y) > 14;
+        down = null;
+        if (moved) return; // scrolling the list, not a tap
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        expandPanelForDecor();
+        toggleDecor(d.name);
+      },
+      { passive: false }
+    );
+    btn.addEventListener('pointercancel', () => {
+      down = null;
     });
     grid.appendChild(btn);
   });
@@ -831,10 +880,9 @@ function initMap() {
     pauseAutoZip(1500);
     activeSearchBbox = areaAround(lat, lng);
     await syncZipFromLatLon(lat, lng, { quiet: false, placePin: true });
-    // On phones, peek the panel so status/ZIP is visible
-    if (window.matchMedia('(max-width: 820px)').matches) {
-      $('#panel')?.classList.remove('is-expanded');
-      $('#panel-handle')?.setAttribute('aria-expanded', 'false');
+    // Keep the sheet open so decor types stay tappable after setting a ZIP
+    if (isMobileSheet()) {
+      setPanelExpanded(true);
       refreshMapSize();
     }
   });
@@ -935,9 +983,8 @@ function bindPanelSheet() {
   if (!panel || !handle) return;
 
   const toggle = () => {
-    const open = panel.classList.toggle('is-expanded');
-    handle.setAttribute('aria-expanded', open ? 'true' : 'false');
-    setTimeout(refreshMapSize, 280);
+    const open = !panel.classList.contains('is-expanded');
+    setPanelExpanded(open);
   };
   handle.addEventListener('click', toggle);
 
@@ -956,16 +1003,16 @@ function bindPanelSheet() {
       if (startY == null) return;
       const dy = e.changedTouches[0].clientY - startY;
       startY = null;
-      if (dy < -28) {
-        panel.classList.add('is-expanded');
-        handle.setAttribute('aria-expanded', 'true');
-        setTimeout(refreshMapSize, 280);
-      } else if (dy > 28) {
-        panel.classList.remove('is-expanded');
-        handle.setAttribute('aria-expanded', 'false');
-        setTimeout(refreshMapSize, 280);
-      }
+      if (dy < -28) setPanelExpanded(true);
+      else if (dy > 28) setPanelExpanded(false);
     },
+    { passive: true }
+  );
+
+  // Expanding when the user starts picking types
+  $('#decor-picker')?.addEventListener(
+    'pointerdown',
+    () => expandPanelForDecor(),
     { passive: true }
   );
 }
@@ -976,22 +1023,11 @@ function bindUi() {
   bindPanelSheet();
 
   $('#decor-filter').addEventListener('input', (e) => buildDecorGrid(e.target.value));
-  $('#decor-filter').addEventListener('focus', () => {
-    // Expand sheet so the filtered list isn't clipped by the keyboard/sheet
-    if (window.matchMedia('(max-width: 820px)').matches) {
-      $('#panel')?.classList.add('is-expanded');
-      $('#panel-handle')?.setAttribute('aria-expanded', 'true');
-      setTimeout(refreshMapSize, 280);
-    }
-  });
+  $('#decor-filter').addEventListener('focus', () => expandPanelForDecor());
 
   $('#btn-find').addEventListener('click', () => {
     if (selectedDecors.size) {
-      if (window.matchMedia('(max-width: 820px)').matches) {
-        $('#panel')?.classList.add('is-expanded');
-        $('#panel-handle')?.setAttribute('aria-expanded', 'true');
-        setTimeout(refreshMapSize, 280);
-      }
+      expandPanelForDecor();
       browseDecorInView(selectedDecors);
     }
   });
