@@ -27,6 +27,13 @@ const CACHE_TTL_MS = 30 * 60 * 1000;
 const GEOCODE_TTL_MS = 24 * 60 * 60 * 1000;
 const LS_PREFIX = 'ubs:v2:';
 
+/** Support links — change coffeeUrl if your Buy Me a Coffee handle differs */
+const SUPPORT = {
+  githubRepo: 'no1summer/us-bloom-scout',
+  coffeeUrl: 'https://www.buymeacoffee.com/no1summer',
+  likeKey: 'ubs:liked:v1',
+};
+
 let map;
 let markersLayer;
 let centerMarker;
@@ -676,6 +683,7 @@ function initMap() {
     fadeAnimation: false,
     zoomAnimation: true,
     markerZoomAnimation: false,
+    tapTolerance: 25,
   }).setView([DEFAULT.lat, DEFAULT.lon], DEFAULT.zoom);
 
   L.control.zoom({ position: 'topright' }).addTo(map);
@@ -695,23 +703,161 @@ function initMap() {
     pauseAutoZip(1500);
     activeSearchBbox = areaAround(lat, lng);
     await syncZipFromLatLon(lat, lng, { quiet: false, placePin: true });
+    // On phones, peek the panel so status/ZIP is visible
+    if (window.matchMedia('(max-width: 820px)').matches) {
+      $('#panel')?.classList.remove('is-expanded');
+      $('#panel-handle')?.setAttribute('aria-expanded', 'false');
+      refreshMapSize();
+    }
   });
 
   map.on('moveend', () => scheduleZipFromMapCenter());
 
-  requestAnimationFrame(() => {
-    map.invalidateSize({ animate: false });
-    setTimeout(() => map.invalidateSize({ animate: false }), 100);
+  requestAnimationFrame(() => refreshMapSize());
+  window.addEventListener('resize', () => refreshMapSize());
+  window.addEventListener('orientationchange', () => setTimeout(refreshMapSize, 250));
+}
+
+function refreshMapSize() {
+  if (!map) return;
+  map.invalidateSize({ animate: false });
+}
+
+function isLiked() {
+  try {
+    return localStorage.getItem(SUPPORT.likeKey) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setLiked(on) {
+  try {
+    localStorage.setItem(SUPPORT.likeKey, on ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+}
+
+function paintLikeUi(count) {
+  const liked = isLiked();
+  document.querySelectorAll('.like-btn').forEach((btn) => {
+    btn.classList.toggle('is-liked', liked);
+    btn.setAttribute('aria-pressed', liked ? 'true' : 'false');
+    const ico = btn.querySelector('.support-ico');
+    if (ico) ico.textContent = liked ? '♥' : '♡';
   });
+  document.querySelectorAll('.support-count, #like-count, .like-count-panel').forEach((el) => {
+    if (typeof count === 'number') el.textContent = String(count);
+  });
+}
+
+async function loadLikeCount() {
+  let stars = 0;
+  try {
+    const res = await fetch(`https://api.github.com/repos/${SUPPORT.githubRepo}`, {
+      headers: { Accept: 'application/vnd.github+json' },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      stars = data.stargazers_count || 0;
+    }
+  } catch {
+    /* offline / rate limit */
+  }
+  const localBonus = isLiked() ? 1 : 0;
+  // Show GitHub stars; if user liked locally but hasn't starred, still show +1 feel via max
+  const shown = Math.max(stars, localBonus ? stars + (stars === 0 ? 1 : 0) : stars);
+  paintLikeUi(shown || (isLiked() ? 1 : 0));
+  return stars;
+}
+
+function bindSupportUi() {
+  document.querySelectorAll('a.coffee-btn').forEach((a) => {
+    a.href = SUPPORT.coffeeUrl;
+  });
+
+  const onLike = async () => {
+    const next = !isLiked();
+    setLiked(next);
+    paintLikeUi();
+    // Bump visible count optimistically
+    document.querySelectorAll('.support-count, #like-count, .like-count-panel').forEach((el) => {
+      const n = parseInt(el.textContent, 10) || 0;
+      el.textContent = String(Math.max(0, n + (next ? 1 : -1)) || (next ? 1 : 0));
+    });
+    if (next) {
+      // Encourage a GitHub star (persistent public like)
+      window.open(`https://github.com/${SUPPORT.githubRepo}`, '_blank', 'noopener,noreferrer');
+      setStatus('Thanks for the like — starring the GitHub repo helps a lot!');
+    } else {
+      setStatus('Like removed.');
+    }
+  };
+
+  $('#btn-like')?.addEventListener('click', onLike);
+  $('#btn-like-panel')?.addEventListener('click', onLike);
+  paintLikeUi(0);
+  loadLikeCount();
+}
+
+function bindPanelSheet() {
+  const panel = $('#panel');
+  const handle = $('#panel-handle');
+  if (!panel || !handle) return;
+
+  const toggle = () => {
+    const open = panel.classList.toggle('is-expanded');
+    handle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    setTimeout(refreshMapSize, 280);
+  };
+  handle.addEventListener('click', toggle);
+
+  // Swipe up/down on handle area
+  let startY = null;
+  handle.addEventListener(
+    'touchstart',
+    (e) => {
+      startY = e.changedTouches[0].clientY;
+    },
+    { passive: true }
+  );
+  handle.addEventListener(
+    'touchend',
+    (e) => {
+      if (startY == null) return;
+      const dy = e.changedTouches[0].clientY - startY;
+      startY = null;
+      if (dy < -28) {
+        panel.classList.add('is-expanded');
+        handle.setAttribute('aria-expanded', 'true');
+        setTimeout(refreshMapSize, 280);
+      } else if (dy > 28) {
+        panel.classList.remove('is-expanded');
+        handle.setAttribute('aria-expanded', 'false');
+        setTimeout(refreshMapSize, 280);
+      }
+    },
+    { passive: true }
+  );
 }
 
 function bindUi() {
   buildDecorGrid();
+  bindSupportUi();
+  bindPanelSheet();
 
   $('#decor-filter').addEventListener('input', (e) => buildDecorGrid(e.target.value));
 
   $('#btn-find').addEventListener('click', () => {
-    if (selectedDecors.size) browseDecorInView(selectedDecors);
+    if (selectedDecors.size) {
+      if (window.matchMedia('(max-width: 820px)').matches) {
+        $('#panel')?.classList.add('is-expanded');
+        $('#panel-handle')?.setAttribute('aria-expanded', 'true');
+        setTimeout(refreshMapSize, 280);
+      }
+      browseDecorInView(selectedDecors);
+    }
   });
 
   $('#btn-clear').addEventListener('click', () => {
@@ -725,13 +871,13 @@ function bindUi() {
     clearMapOverlays();
     renderResults([]);
     $('#address').value = '';
-    setStatus('Cleared. Click the map or search a ZIP.');
+    setStatus('Cleared. Tap the map or search a ZIP.');
   });
 
   const runSearch = async () => {
     const q = $('#address').value.trim();
     if (!q) {
-      setStatus('Enter a US ZIP, city, or address — or click the map.');
+      setStatus('Enter a US ZIP, city, or address — or tap the map.');
       return;
     }
     setStatus(`Looking up “${q}”…`, true);
@@ -748,12 +894,14 @@ function bindUi() {
         lastShownZip = q.slice(0, 5);
         $('#address').value = lastShownZip;
       } else {
-        syncZipFromLatLon(hit.lat, hit.lon, { quiet: true });
+        syncZipFromLatLon(hit.lat, hit.lon, { quiet: true, placePin: false });
       }
       setAreaPin(hit.lat, hit.lon, { zoom: 14, fly: true, bbox: activeSearchBbox });
       setStatus(
         `Area set: ${hit.label.split(',').slice(0, 2).join(',')}. Select decor → Show in area.`
       );
+      // Blur keyboard on mobile
+      $('#address')?.blur();
     } catch (err) {
       console.error(err);
       setStatus('Address lookup failed.');
@@ -777,10 +925,10 @@ function bindUi() {
         pauseAutoZip(2000);
         activeSearchBbox = areaAround(lat, lon);
         setAreaPin(lat, lon, { zoom: 14, fly: true });
-        await syncZipFromLatLon(lat, lon);
+        await syncZipFromLatLon(lat, lon, { placePin: false });
       },
-      () => setStatus('Location permission blocked.'),
-      { enableHighAccuracy: true, timeout: 8000 }
+      () => setStatus('Location permission blocked — enable location for this site.'),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
     );
   });
 }
@@ -788,7 +936,7 @@ function bindUi() {
 async function boot() {
   initMap();
   bindUi();
-  setStatus('Click the map or search a ZIP, then select decor types.');
+  setStatus('Tap the map or search a ZIP, then select decor types.');
 }
 
 boot();
