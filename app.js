@@ -349,6 +349,101 @@ async function geocode(q) {
   return hit;
 }
 
+/** Reverse-geocode lat/lon → US ZIP (and short label). Cached. */
+async function reverseGeocode(lat, lon) {
+  const key =
+    LS_PREFIX +
+    'rev:' +
+    lat.toFixed(3) +
+    ',' +
+    lon.toFixed(3);
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Date.now() - parsed.at < GEOCODE_TTL_MS) return parsed.hit;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  const url = new URL(`${NOMINATIM}/reverse`);
+  url.searchParams.set('format', 'json');
+  url.searchParams.set('lat', String(lat));
+  url.searchParams.set('lon', String(lon));
+  url.searchParams.set('zoom', '18');
+  url.searchParams.set('addressdetails', '1');
+
+  const res = await fetch(url.toString(), {
+    headers: { Accept: 'application/json', 'Accept-Language': 'en-US' },
+  });
+  if (!res.ok) throw new Error('Reverse geocode failed');
+  const data = await res.json();
+  const addr = data.address || {};
+  const zip = (addr.postcode || '').toString().match(/\d{5}/)?.[0] || null;
+  const city =
+    addr.city || addr.town || addr.village || addr.hamlet || addr.county || '';
+  const state = addr.state || '';
+  const hit = {
+    lat,
+    lon,
+    zip,
+    label: data.display_name || [zip, city, state].filter(Boolean).join(', '),
+    city,
+    state,
+  };
+  try {
+    localStorage.setItem(key, JSON.stringify({ at: Date.now(), hit }));
+  } catch {
+    /* ignore */
+  }
+  return hit;
+}
+
+let reverseTimer = null;
+let suppressReverseUntil = 0;
+let lastShownZip = '';
+
+function pauseAutoZip(ms = 1200) {
+  suppressReverseUntil = Date.now() + ms;
+}
+
+/** Update the search box + active area from a map position */
+async function syncZipFromLatLon(lat, lon, { quiet = false } = {}) {
+  try {
+    const hit = await reverseGeocode(lat, lon);
+    activeAreaLabel = hit.label;
+    activeSearchBbox = areaAround(lat, lon);
+    if (hit.zip) {
+      if (hit.zip !== lastShownZip) {
+        $('#address').value = hit.zip;
+        lastShownZip = hit.zip;
+      }
+      if (!quiet) {
+        const place = [hit.city, hit.state].filter(Boolean).join(', ');
+        setStatus(`ZIP ${hit.zip}${place ? ` · ${place}` : ''} — pick decor or Scan nearby.`);
+      }
+    } else if (!quiet) {
+      setStatus('No ZIP for this spot — still searchable on the map.');
+    }
+    return hit;
+  } catch (err) {
+    console.warn(err);
+    if (!quiet) setStatus('Could not resolve ZIP for this location.');
+    return null;
+  }
+}
+
+function scheduleZipFromMapCenter() {
+  if (Date.now() < suppressReverseUntil) return;
+  clearTimeout(reverseTimer);
+  reverseTimer = setTimeout(() => {
+    if (Date.now() < suppressReverseUntil) return;
+    const c = map.getCenter();
+    syncZipFromLatLon(c.lat, c.lng, { quiet: true });
+  }, 650);
+}
+
 function cancelInFlight() {
   if (activeAbort) activeAbort.abort();
   activeAbort = new AbortController();
@@ -384,8 +479,8 @@ function setScanCenter(lat, lon, { zoom = 16, fly = true } = {}) {
     fillColor: '#6fbf4a',
     fillOpacity: 0.12,
   }).addTo(map);
-  if (fly) map.flyTo([lat, lon], zoom, { duration: 0.55 });
-  else map.setView([lat, lon], zoom);
+  if (fly) map.setView([lat, lon], zoom, { animate: true, duration: 0.35 });
+  else map.setView([lat, lon], zoom, { animate: false });
   $('#btn-scan').disabled = false;
 }
 
@@ -417,7 +512,6 @@ function renderResults(items) {
     btn.type = 'button';
     btn.className = 'result-item';
     btn.style.setProperty('--accent', item.decor.color);
-    btn.style.animationDelay = `${Math.min(idx, 12) * 0.03}s`;
     btn.innerHTML = `
       <span class="badge">${item.decor.icon}</span>
       <span class="meta">
@@ -619,25 +713,41 @@ function initMap() {
   map = L.map('map', {
     zoomControl: false,
     attributionControl: true,
+    fadeAnimation: false,
+    zoomAnimation: true,
+    markerZoomAnimation: false,
   }).setView([DEFAULT.lat, DEFAULT.lon], DEFAULT.zoom);
 
   L.control.zoom({ position: 'topright' }).addTo(map);
 
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     maxZoom: 19,
+    // Avoid tile fade-in flicker on first paint
+    opacity: 1,
+    updateWhenIdle: true,
     attribution:
       '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
   }).addTo(map);
 
   markersLayer = L.layerGroup().addTo(map);
 
-  map.on('click', (e) => {
+  map.on('click', async (e) => {
+    const { lat, lng } = e.latlng;
+    pauseAutoZip(1500);
+    // Always refresh ZIP for the clicked point
+    syncZipFromLatLon(lat, lng);
     if (mode === 'nearby') {
-      activeAreaLabel = 'map pin';
-      // Pin click: browse should follow the map view, not an old ZIP
-      activeSearchBbox = null;
-      scanNearby(e.latlng.lat, e.latlng.lng);
+      scanNearby(lat, lng);
     }
+  });
+
+  // After pan/zoom settles, update ZIP for map center
+  map.on('moveend', () => scheduleZipFromMapCenter());
+
+  // Leaflet often paints wrong until the container size is settled
+  requestAnimationFrame(() => {
+    map.invalidateSize({ animate: false });
+    setTimeout(() => map.invalidateSize({ animate: false }), 100);
   });
 }
 
@@ -668,8 +778,8 @@ function bindUi() {
 
   $('#btn-scan').addEventListener('click', () => {
     const c = map.getCenter();
-    activeAreaLabel = 'map center';
-    activeSearchBbox = null;
+    pauseAutoZip(1500);
+    syncZipFromLatLon(c.lat, c.lng);
     scanNearby(c.lat, c.lng);
   });
 
@@ -680,6 +790,7 @@ function bindUi() {
       return;
     }
     setStatus(`Looking up “${q}”…`, true);
+    pauseAutoZip(2000);
     try {
       const hit = await geocode(q);
       if (!hit) {
@@ -687,8 +798,14 @@ function bindUi() {
         return;
       }
       activeAreaLabel = hit.label;
-      // Compact window around the point (full ZIP polygons are huge → slow Overpass)
       activeSearchBbox = areaAround(hit.lat, hit.lon);
+      if (/^\d{5}/.test(q)) {
+        lastShownZip = q.slice(0, 5);
+        $('#address').value = lastShownZip;
+      } else {
+        // Resolve ZIP for the geocoded point so the box stays in sync
+        syncZipFromLatLon(hit.lat, hit.lon, { quiet: true });
+      }
       map.fitBounds(
         [
           [activeSearchBbox.south, activeSearchBbox.west],
@@ -718,10 +835,12 @@ function bindUi() {
     }
     setStatus('Getting your location…', true);
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        activeAreaLabel = 'your location';
-        activeSearchBbox = areaAround(pos.coords.latitude, pos.coords.longitude);
-        scanNearby(pos.coords.latitude, pos.coords.longitude);
+      async (pos) => {
+        const { latitude: lat, longitude: lon } = pos.coords;
+        pauseAutoZip(2000);
+        activeSearchBbox = areaAround(lat, lon);
+        await syncZipFromLatLon(lat, lon);
+        scanNearby(lat, lon);
       },
       () => setStatus('Location permission blocked.'),
       { enableHighAccuracy: true, timeout: 8000 }
@@ -729,28 +848,13 @@ function bindUi() {
   });
 
   $('#address').value = '';
-  $('#address').placeholder = 'US ZIP, city, or address…';
+  $('#address').placeholder = 'US ZIP updates as you move the map…';
 }
 
 async function boot() {
   initMap();
   bindUi();
-  setStatus('Search any US ZIP or city — or use your location.');
-
-  // Prefer device location on first load when available
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        activeAreaLabel = 'your location';
-        activeSearchBbox = areaAround(pos.coords.latitude, pos.coords.longitude);
-        scanNearby(pos.coords.latitude, pos.coords.longitude, { zoom: 15 });
-      },
-      () => {
-        /* stay on US overview until user searches */
-      },
-      { enableHighAccuracy: false, timeout: 4000 }
-    );
-  }
+  setStatus('Search a ZIP, click the map, or pan — ZIP updates automatically.');
 }
 
 boot();
