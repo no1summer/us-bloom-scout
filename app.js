@@ -1,6 +1,6 @@
 /**
- * Bloom Scout — Pikmin Bloom decor finder
- * Default home: ZIP 50010 (Ames, Iowa) with local OSM cache for instant results
+ * US Bloom Scout — US-first Pikmin Bloom decor finder
+ * Local OSM cache for ZIP 50010 (Ames, IA) so US users skip slow live Overpass.
  */
 
 const HOME = {
@@ -8,7 +8,7 @@ const HOME = {
   // Downtown Ames (Main St) — denser POIs than the postcode centroid
   lat: 42.025,
   lon: -93.614,
-  label: '50010 · Downtown Ames',
+  label: 'US · 50010 Downtown Ames',
   bbox: {
     south: 41.9834204,
     west: -93.6762780,
@@ -304,8 +304,8 @@ async function scanNearby(lat, lon, { fly = true } = {}) {
   const local = homeSnapshot && inHomeBbox(lat, lon);
   setStatus(
     local
-      ? `Scanning ${DETECTOR_RANGE} m (cached ${HOME.zip})…`
-      : `Scanning ${DETECTOR_RANGE} m (live OSM)…`,
+      ? `Scanning ${DETECTOR_RANGE} m · US cache ${HOME.zip} (instant)…`
+      : `Scanning ${DETECTOR_RANGE} m · live Overpass (slower outside US cache)…`,
     true
   );
   try {
@@ -313,7 +313,8 @@ async function scanNearby(lat, lon, { fly = true } = {}) {
     const items = elementsToResults(elements, { lat, lon });
     plotResults(items);
     renderResults(items);
-    const srcNote = source === 'local-50010' ? ' · instant cache' : '';
+    const srcNote =
+      source === 'local-50010' ? ' · US instant cache' : ' · live Overpass';
     setStatus(
       items.length
         ? `Found ${items.length} decor spot${items.length === 1 ? '' : 's'}${srcNote}.`
@@ -352,7 +353,7 @@ async function browseDecorInHomeZip(decorName) {
   if (items.length) {
     const group = L.featureGroup(items.map((i) => i.marker));
     map.fitBounds(group.getBounds().pad(0.12), { maxZoom: 15, animate: true });
-    setStatus(`${items.length} ${decorName} location${items.length === 1 ? '' : 's'} in ${HOME.zip} · instant cache.`);
+    setStatus(`${items.length} ${decorName} location${items.length === 1 ? '' : 's'} in US ZIP ${HOME.zip} · instant cache.`);
   } else {
     map.fitBounds(
       [

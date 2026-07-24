@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bloom Scout — Find Pikmin Bloom Decor</title>
+  <title>US Bloom Scout — Fast Pikmin Bloom Decor Map</title>
+  <meta name="description" content="US-first Pikmin Bloom decor map. Instant ZIP 50010 cache — faster than Europe-hosted live Overpass tools." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -451,11 +452,11 @@ input[type="search"]:focus {
           </svg>
         </span>
         <div class="brand-text">
-          <h1>Bloom Scout</h1>
-          <p>Find Pikmin Bloom decor in Ames · 50010</p>
+          <h1>US Bloom Scout</h1>
+          <p>Fast US decor map · Ames 50010 cache</p>
         </div>
       </div>
-      <p class="brand-note">Home: 50010 · ~100&nbsp;m detector</p>
+      <p class="brand-note">US-first · instant cache · ~100&nbsp;m</p>
     </header>
 
     <main class="stage">
@@ -483,7 +484,7 @@ input[type="search"]:focus {
         </div>
 
         <section class="mode-pane is-active" data-pane="nearby">
-          <p class="hint">Starts in ZIP 50010. Click the map to rescan within ~100&nbsp;m.</p>
+          <p class="hint">US-first: starts in ZIP 50010 with a local cache (no slow overseas Overpass wait). Click the map to rescan ~100&nbsp;m.</p>
           <button type="button" id="btn-scan" class="ghost-btn" disabled>Scan map center</button>
         </section>
 
@@ -1163,8 +1164,8 @@ out center tags qt;
   </script>
   <script>
 /**
- * Bloom Scout — Pikmin Bloom decor finder
- * Default home: ZIP 50010 (Ames, Iowa) with local OSM cache for instant results
+ * US Bloom Scout — US-first Pikmin Bloom decor finder
+ * Local OSM cache for ZIP 50010 (Ames, IA) so US users skip slow live Overpass.
  */
 
 const HOME = {
@@ -1172,7 +1173,7 @@ const HOME = {
   // Downtown Ames (Main St) — denser POIs than the postcode centroid
   lat: 42.025,
   lon: -93.614,
-  label: '50010 · Downtown Ames',
+  label: 'US · 50010 Downtown Ames',
   bbox: {
     south: 41.9834204,
     west: -93.6762780,
@@ -1473,8 +1474,8 @@ async function scanNearby(lat, lon, { fly = true } = {}) {
   const local = homeSnapshot && inHomeBbox(lat, lon);
   setStatus(
     local
-      ? `Scanning ${DETECTOR_RANGE} m (cached ${HOME.zip})…`
-      : `Scanning ${DETECTOR_RANGE} m (live OSM)…`,
+      ? `Scanning ${DETECTOR_RANGE} m · US cache ${HOME.zip} (instant)…`
+      : `Scanning ${DETECTOR_RANGE} m · live Overpass (slower outside US cache)…`,
     true
   );
   try {
@@ -1482,7 +1483,8 @@ async function scanNearby(lat, lon, { fly = true } = {}) {
     const items = elementsToResults(elements, { lat, lon });
     plotResults(items);
     renderResults(items);
-    const srcNote = source === 'local-50010' ? ' · instant cache' : '';
+    const srcNote =
+      source === 'local-50010' ? ' · US instant cache' : ' · live Overpass';
     setStatus(
       items.length
         ? `Found ${items.length} decor spot${items.length === 1 ? '' : 's'}${srcNote}.`
@@ -1521,7 +1523,7 @@ async function browseDecorInHomeZip(decorName) {
   if (items.length) {
     const group = L.featureGroup(items.map((i) => i.marker));
     map.fitBounds(group.getBounds().pad(0.12), { maxZoom: 15, animate: true });
-    setStatus(`${items.length} ${decorName} location${items.length === 1 ? '' : 's'} in ${HOME.zip} · instant cache.`);
+    setStatus(`${items.length} ${decorName} location${items.length === 1 ? '' : 's'} in US ZIP ${HOME.zip} · instant cache.`);
   } else {
     map.fitBounds(
       [

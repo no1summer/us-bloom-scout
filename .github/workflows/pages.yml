@@ -1,4 +1,4 @@
-name: Deploy GitHub Pages
+name: Deploy US Bloom Scout Pages
 
 on:
   push:
