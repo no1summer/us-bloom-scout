@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>US Bloom Scout — Fast Pikmin Bloom Decor Map</title><meta name="description" content="US-first Pikmin Bloom decor map. Search any US ZIP or city — faster than Europe-hosted live Overpass tools."/>
+<title>US Bloom Scout — Fast Pikmin Bloom Decor Map</title><meta name="description" content="US-first Pikmin Bloom decor map. Search any US ZIP or city — click the map to update ZIP and find decor types."/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet"/>
@@ -447,7 +447,7 @@ input[type="search"]:focus {
           <p>Find Pikmin Bloom decor anywhere in the US</p>
         </div>
       </div>
-      <p class="brand-note">US-first · any ZIP · ~100&nbsp;m</p>
+      <p class="brand-note">US-first · click map · multi-select</p>
     </header>
 
     <main class="stage">
@@ -459,7 +459,7 @@ input[type="search"]:focus {
 
         <div class="search-row">
           <label class="sr-only" for="address">Search address</label>
-          <input id="address" type="search" placeholder="US ZIP, city, or address…" autocomplete="off" />
+          <input id="address" type="search" placeholder="US ZIP updates as you click/pan…" autocomplete="off" />
           <button type="button" id="btn-locate" class="icon-btn" title="Use my location" aria-label="Use my location">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
@@ -469,26 +469,15 @@ input[type="search"]:focus {
           <button type="button" id="btn-search" class="primary-btn">Go</button>
         </div>
 
-        <div class="mode-tabs" role="tablist">
-          <button type="button" class="tab is-active" data-mode="nearby" role="tab" aria-selected="true">Nearby all</button>
-          <button type="button" class="tab" data-mode="browse" role="tab" aria-selected="false">Find a decor</button>
+        <p class="hint">Click or pan the map to set the ZIP, multi-select decor types, then Show in area.</p>
+
+        <label class="field-label" for="decor-filter">Decor types (multi-select)</label>
+        <input id="decor-filter" type="search" placeholder="Filter: park, sushi, station…" />
+        <div id="decor-grid" class="decor-grid" role="listbox" aria-multiselectable="true" aria-label="Decor categories"></div>
+        <div class="browse-actions">
+          <button type="button" id="btn-find" class="primary-btn" disabled>Show in area</button>
+          <button type="button" id="btn-clear" class="ghost-btn">Clear</button>
         </div>
-
-        <section class="mode-pane is-active" data-pane="nearby">
-          <p class="hint">Click or pan the map — the ZIP field updates automatically. Then Scan nearby or Show decor types.</p>
-          <button type="button" id="btn-scan" class="ghost-btn" disabled>Scan map center</button>
-        </section>
-
-        <section class="mode-pane" data-pane="browse">
-          <label class="field-label" for="decor-filter">Decor types (multi-select)</label>
-          <input id="decor-filter" type="search" placeholder="Filter: park, sushi, station…" />
-          <div id="decor-grid" class="decor-grid" role="listbox" aria-multiselectable="true" aria-label="Decor categories"></div>
-          <div class="browse-actions">
-            <button type="button" id="btn-find" class="primary-btn" disabled>Show in area</button>
-            <button type="button" id="btn-clear" class="ghost-btn">Clear</button>
-          </div>
-          <p class="hint" style="margin-top:0.45rem">Search a ZIP first (or pan the map), multi-select types, then show them in that area.</p>
-        </section>
 
         <div class="status" id="status" aria-live="polite"></div>
 
@@ -1183,8 +1172,7 @@ const LS_PREFIX = 'ubs:v2:';
 let map;
 let markersLayer;
 let centerMarker;
-let rangeCircle;
-let mode = 'nearby';
+let areaRect = null;
 /** @type {Set<string>} */
 let selectedDecors = new Set();
 let activeAbort = null;
@@ -1311,28 +1299,6 @@ function cacheKey(s) {
 /** Emit node+way lines (skip slow relations) for a tag filter */
 function nwLines(filter, scope) {
   return [`node${filter}(${scope});`, `way${filter}(${scope});`];
-}
-
-/** Fast nearby query — only common POI keys, nodes+ways, short timeout */
-function buildFastAroundQuery(lat, lon, radius = DETECTOR_RANGE) {
-  const scope = `around:${radius},${lat},${lon}`;
-  const lines = [
-    ...nwLines('["amenity"]', scope),
-    ...nwLines('["shop"]', scope),
-    ...nwLines('["leisure"]', scope),
-    ...nwLines('["tourism"]', scope),
-    ...nwLines('["railway"="station"]', scope),
-    ...nwLines('["highway"="bus_stop"]', scope),
-    ...nwLines('["natural"]', scope),
-    ...nwLines('["aeroway"="aerodrome"]', scope),
-  ];
-  return `
-[out:json][timeout:12];
-(
-  ${lines.join('\n  ')}
-);
-out center tags qt;
-  `.trim();
 }
 
 /** Fast bbox query for selected decor types only */
@@ -1574,7 +1540,7 @@ async function syncZipFromLatLon(lat, lon, { quiet = false } = {}) {
       }
       if (!quiet) {
         const place = [hit.city, hit.state].filter(Boolean).join(', ');
-        setStatus(`ZIP ${hit.zip}${place ? ` · ${place}` : ''} — pick decor or Scan nearby.`);
+        setStatus(`ZIP ${hit.zip}${place ? ` · ${place}` : ''} — select decor types, then Show in area.`);
       }
     } else if (!quiet) {
       setStatus('No ZIP for this spot — still searchable on the map.');
@@ -1609,15 +1575,21 @@ function clearMapOverlays({ keepMarkers = false } = {}) {
     map.removeLayer(centerMarker);
     centerMarker = null;
   }
-  if (rangeCircle) {
-    map.removeLayer(rangeCircle);
-    rangeCircle = null;
+  if (areaRect) {
+    map.removeLayer(areaRect);
+    areaRect = null;
   }
 }
 
-function setScanCenter(lat, lon, { zoom = 16, fly = true } = {}) {
+/** Drop a pin and show the active search area for Find a decor */
+function setAreaPin(lat, lon, { zoom = 14, fly = true, bbox = null } = {}) {
   lastCenter = { lat, lon };
-  clearMapOverlays();
+  const box = bbox || activeSearchBbox || areaAround(lat, lon);
+  activeSearchBbox = box;
+
+  if (centerMarker) map.removeLayer(centerMarker);
+  if (areaRect) map.removeLayer(areaRect);
+
   const icon = L.divIcon({
     className: '',
     html: '<div class="center-pin"></div>',
@@ -1625,16 +1597,23 @@ function setScanCenter(lat, lon, { zoom = 16, fly = true } = {}) {
     iconAnchor: [9, 9],
   });
   centerMarker = L.marker([lat, lon], { icon, zIndexOffset: 1000 }).addTo(map);
-  rangeCircle = L.circle([lat, lon], {
-    radius: DETECTOR_RANGE,
-    color: '#3f9a45',
-    weight: 2,
-    fillColor: '#6fbf4a',
-    fillOpacity: 0.12,
-  }).addTo(map);
+  areaRect = L.rectangle(
+    [
+      [box.south, box.west],
+      [box.north, box.east],
+    ],
+    {
+      color: '#3f9a45',
+      weight: 1.5,
+      dashArray: '6 4',
+      fillColor: '#6fbf4a',
+      fillOpacity: 0.06,
+      interactive: false,
+    }
+  ).addTo(map);
+
   if (fly) map.setView([lat, lon], zoom, { animate: true, duration: 0.35 });
   else map.setView([lat, lon], zoom, { animate: false });
-  $('#btn-scan').disabled = false;
 }
 
 function markerIcon(decor) {
@@ -1660,7 +1639,7 @@ function renderResults(items) {
   list.innerHTML = '';
   $('#result-count').textContent = `${items.length} place${items.length === 1 ? '' : 's'}`;
 
-  items.forEach((item, idx) => {
+  items.forEach((item) => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'result-item';
@@ -1676,7 +1655,7 @@ function renderResults(items) {
     btn.addEventListener('click', () => {
       list.querySelectorAll('.result-item').forEach((el) => el.classList.remove('is-active'));
       btn.classList.add('is-active');
-      map.flyTo([item.lat, item.lon], Math.max(map.getZoom(), 17), { duration: 0.4 });
+      map.setView([item.lat, item.lon], Math.max(map.getZoom(), 17), { animate: true });
       if (item.marker) item.marker.openPopup();
     });
     list.appendChild(btn);
@@ -1724,35 +1703,6 @@ function plotResults(items) {
   }
 }
 
-async function fetchNearbyElements(lat, lon, signal) {
-  const query = buildFastAroundQuery(lat, lon, DETECTOR_RANGE);
-  const elements = await queryOverpass(query, { signal, timeoutMs: 14000 });
-  return { elements, source: 'live' };
-}
-
-async function scanNearby(lat, lon, { fly = true, zoom = 16 } = {}) {
-  const signal = cancelInFlight();
-  setScanCenter(lat, lon, { fly, zoom });
-  setStatus(`Scanning ${DETECTOR_RANGE} m…`, true);
-  const t0 = performance.now();
-  try {
-    const { elements } = await fetchNearbyElements(lat, lon, signal);
-    const items = elementsToResults(elements, { lat, lon });
-    plotResults(items);
-    renderResults(items);
-    const ms = Math.round(performance.now() - t0);
-    setStatus(
-      items.length
-        ? `Found ${items.length} decor spot${items.length === 1 ? '' : 's'} (${ms} ms).`
-        : `No mapped decor within ${DETECTOR_RANGE} m (${ms} ms).`
-    );
-  } catch (err) {
-    if (err.name === 'AbortError') return;
-    console.error(err);
-    setStatus('Map data request failed. Try again in a moment.');
-  }
-}
-
 /** Find selected decor type(s) in the searched ZIP/city (or current map view) */
 async function browseDecorInView(decorNames) {
   const names = [...decorNames];
@@ -1766,8 +1716,11 @@ async function browseDecorInView(decorNames) {
   const label =
     names.length === 1 ? names[0] : `${names.length} decor types`;
   setStatus(`Finding ${label} near ${areaNote}…`, true);
-  clearMapOverlays({ keepMarkers: false });
 
+  // Keep pin/area; only clear decor markers
+  markersLayer.clearLayers();
+
+  pauseAutoZip(2000);
   map.fitBounds(
     [
       [bbox.south, bbox.west],
@@ -1850,18 +1803,6 @@ function buildDecorGrid(filter = '') {
   updateFindButton();
 }
 
-function setMode(next) {
-  mode = next;
-  document.querySelectorAll('.tab').forEach((tab) => {
-    const on = tab.dataset.mode === next;
-    tab.classList.toggle('is-active', on);
-    tab.setAttribute('aria-selected', on ? 'true' : 'false');
-  });
-  document.querySelectorAll('.mode-pane').forEach((pane) => {
-    pane.classList.toggle('is-active', pane.dataset.pane === next);
-  });
-}
-
 function initMap() {
   map = L.map('map', {
     zoomControl: false,
@@ -1875,7 +1816,6 @@ function initMap() {
 
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     maxZoom: 19,
-    // Avoid tile fade-in flicker on first paint
     opacity: 1,
     updateWhenIdle: true,
     attribution:
@@ -1887,17 +1827,13 @@ function initMap() {
   map.on('click', async (e) => {
     const { lat, lng } = e.latlng;
     pauseAutoZip(1500);
-    // Always refresh ZIP for the clicked point
-    syncZipFromLatLon(lat, lng);
-    if (mode === 'nearby') {
-      scanNearby(lat, lng);
-    }
+    activeSearchBbox = areaAround(lat, lng);
+    setAreaPin(lat, lng, { zoom: Math.max(map.getZoom(), 14), fly: false });
+    await syncZipFromLatLon(lat, lng);
   });
 
-  // After pan/zoom settles, update ZIP for map center
   map.on('moveend', () => scheduleZipFromMapCenter());
 
-  // Leaflet often paints wrong until the container size is settled
   requestAnimationFrame(() => {
     map.invalidateSize({ animate: false });
     setTimeout(() => map.invalidateSize({ animate: false }), 100);
@@ -1906,10 +1842,6 @@ function initMap() {
 
 function bindUi() {
   buildDecorGrid();
-
-  document.querySelectorAll('.tab').forEach((tab) => {
-    tab.addEventListener('click', () => setMode(tab.dataset.mode));
-  });
 
   $('#decor-filter').addEventListener('input', (e) => buildDecorGrid(e.target.value));
 
@@ -1922,24 +1854,19 @@ function bindUi() {
     selectedDecors.clear();
     activeSearchBbox = null;
     activeAreaLabel = 'map view';
+    lastShownZip = '';
     updateFindButton();
     buildDecorGrid($('#decor-filter').value);
     clearMapOverlays();
     renderResults([]);
-    setStatus('Cleared. Search a ZIP or city, or click the map.');
-  });
-
-  $('#btn-scan').addEventListener('click', () => {
-    const c = map.getCenter();
-    pauseAutoZip(1500);
-    syncZipFromLatLon(c.lat, c.lng);
-    scanNearby(c.lat, c.lng);
+    $('#address').value = '';
+    setStatus('Cleared. Click the map or search a ZIP.');
   });
 
   const runSearch = async () => {
     const q = $('#address').value.trim();
     if (!q) {
-      setStatus('Enter a US ZIP, city, or address.');
+      setStatus('Enter a US ZIP, city, or address — or click the map.');
       return;
     }
     setStatus(`Looking up “${q}”…`, true);
@@ -1956,19 +1883,11 @@ function bindUi() {
         lastShownZip = q.slice(0, 5);
         $('#address').value = lastShownZip;
       } else {
-        // Resolve ZIP for the geocoded point so the box stays in sync
         syncZipFromLatLon(hit.lat, hit.lon, { quiet: true });
       }
-      map.fitBounds(
-        [
-          [activeSearchBbox.south, activeSearchBbox.west],
-          [activeSearchBbox.north, activeSearchBbox.east],
-        ],
-        { padding: [28, 28], maxZoom: 14, animate: true }
-      );
-      setScanCenter(hit.lat, hit.lon, { fly: false, zoom: 14 });
+      setAreaPin(hit.lat, hit.lon, { zoom: 14, fly: true, bbox: activeSearchBbox });
       setStatus(
-        `Ready: ${hit.label.split(',').slice(0, 2).join(',')}. Pick decor types → Show, or Scan nearby.`
+        `Area set: ${hit.label.split(',').slice(0, 2).join(',')}. Select decor → Show in area.`
       );
     } catch (err) {
       console.error(err);
@@ -1992,22 +1911,19 @@ function bindUi() {
         const { latitude: lat, longitude: lon } = pos.coords;
         pauseAutoZip(2000);
         activeSearchBbox = areaAround(lat, lon);
+        setAreaPin(lat, lon, { zoom: 14, fly: true });
         await syncZipFromLatLon(lat, lon);
-        scanNearby(lat, lon);
       },
       () => setStatus('Location permission blocked.'),
       { enableHighAccuracy: true, timeout: 8000 }
     );
   });
-
-  $('#address').value = '';
-  $('#address').placeholder = 'US ZIP updates as you move the map…';
 }
 
 async function boot() {
   initMap();
   bindUi();
-  setStatus('Search a ZIP, click the map, or pan — ZIP updates automatically.');
+  setStatus('Click the map or search a ZIP, then select decor types.');
 }
 
 boot();

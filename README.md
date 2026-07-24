@@ -24,8 +24,7 @@ Tag mappings build on community work: [bloom-decor-map](https://github.com/midwe
 ## How it works
 
 1. Search a ZIP (e.g. `78701`) or city, or use **my location**.
-2. **Nearby all** — decor within ~100&nbsp;m of the pin.
-3. **Find a decor** — multi-select types, then show matches in the visible map area.
+2. Multi-select decor types, then **Show in area**.
 
 ## Accuracy
 
