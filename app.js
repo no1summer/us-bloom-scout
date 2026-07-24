@@ -1,10 +1,9 @@
 /**
  * US Bloom Scout — US-first Pikmin Bloom decor finder
- * Prefers US geocoding; optional local seed cache speeds some areas.
+ * Speed: compact ZIP windows, raced Overpass mirrors, local result cache.
  */
 
 const DEFAULT = {
-  // Contiguous US midpoint — neutral start (not tied to one ZIP)
   lat: 39.8283,
   lon: -98.5795,
   zoom: 5,
@@ -18,11 +17,15 @@ const OVERPASS_SERVERS = [
 
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
 const EARTH_R = 6371000;
-/** Soft cap so Overpass bbox queries stay responsive (~city-scale) */
-const MAX_BBOX_SPAN_DEG = 0.35;
+/** ~5–6 km half-span — keeps Overpass queries fast */
+const MAX_BBOX_SPAN_DEG = 0.1;
+/** Default search window around a ZIP centroid (~4 km) */
+const ZIP_PAD_DEG = 0.038;
 
 const queryCache = new Map();
-const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_TTL_MS = 30 * 60 * 1000;
+const GEOCODE_TTL_MS = 24 * 60 * 60 * 1000;
+const LS_PREFIX = 'ubs:v2:';
 
 let map;
 let markersLayer;
@@ -33,9 +36,7 @@ let mode = 'nearby';
 let selectedDecors = new Set();
 let activeAbort = null;
 let lastCenter = { lat: DEFAULT.lat, lon: DEFAULT.lon };
-/** Active search/area label for status messages */
 let activeAreaLabel = 'map view';
-/** Bbox from last ZIP/city search — used by Find a decor */
 let activeSearchBbox = null;
 let lastResults = [];
 
@@ -86,6 +87,15 @@ function clampBbox(bbox) {
   return { south, west, north, east };
 }
 
+function areaAround(lat, lon, pad = ZIP_PAD_DEG) {
+  return clampBbox({
+    south: lat - pad,
+    north: lat + pad,
+    west: lon - pad,
+    east: lon + pad,
+  });
+}
+
 function mapViewportBbox() {
   const b = map.getBounds();
   return clampBbox({
@@ -96,7 +106,6 @@ function mapViewportBbox() {
   });
 }
 
-/** Prefer last searched ZIP/city bbox; otherwise current map view */
 function browseTargetBbox() {
   if (activeSearchBbox) return clampBbox(activeSearchBbox);
   return mapViewportBbox();
@@ -111,48 +120,191 @@ function updateFindButton() {
   else btn.textContent = `Show ${n} types in area`;
 }
 
-async function queryOverpass(query, { timeoutMs = 28000, signal } = {}) {
-  const key = query.replace(/\s+/g, ' ').trim();
-  const cached = queryCache.get(key);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.elements;
-
-  let lastError;
-  for (const server of OVERPASS_SERVERS) {
-    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    const onCancel = () => ctrl.abort();
-    signal?.addEventListener('abort', onCancel, { once: true });
-    try {
-      const res = await fetch(server, {
-        method: 'POST',
-        body: query,
-        headers: {
-          'Content-Type': 'text/plain',
-          Accept: 'application/json',
-        },
-        signal: ctrl.signal,
-      });
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onCancel);
-      if (!res.ok) throw new Error(`Overpass HTTP ${res.status}`);
-      const data = await res.json();
-      const elements = data.elements || [];
-      queryCache.set(key, { at: Date.now(), elements });
-      return elements;
-    } catch (err) {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onCancel);
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-      lastError = err;
+function cacheGet(key) {
+  const mem = queryCache.get(key);
+  if (mem && Date.now() - mem.at < CACHE_TTL_MS) return mem.elements;
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Date.now() - parsed.at > CACHE_TTL_MS) {
+      localStorage.removeItem(LS_PREFIX + key);
+      return null;
     }
+    queryCache.set(key, parsed);
+    return parsed.elements;
+  } catch {
+    return null;
   }
-  throw lastError || new Error('Overpass failed');
 }
 
-/** US-preferring geocode; ZIP codes use postalcode lookup */
+function cacheSet(key, elements) {
+  const entry = { at: Date.now(), elements };
+  queryCache.set(key, entry);
+  try {
+    localStorage.setItem(LS_PREFIX + key, JSON.stringify(entry));
+  } catch {
+    /* quota — ignore */
+  }
+}
+
+function cacheKey(s) {
+  // short stable key
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  return 'q' + (h >>> 0).toString(36);
+}
+
+/** Emit node+way lines (skip slow relations) for a tag filter */
+function nwLines(filter, scope) {
+  return [`node${filter}(${scope});`, `way${filter}(${scope});`];
+}
+
+/** Fast nearby query — only common POI keys, nodes+ways, short timeout */
+function buildFastAroundQuery(lat, lon, radius = DETECTOR_RANGE) {
+  const scope = `around:${radius},${lat},${lon}`;
+  const lines = [
+    ...nwLines('["amenity"]', scope),
+    ...nwLines('["shop"]', scope),
+    ...nwLines('["leisure"]', scope),
+    ...nwLines('["tourism"]', scope),
+    ...nwLines('["railway"="station"]', scope),
+    ...nwLines('["highway"="bus_stop"]', scope),
+    ...nwLines('["natural"]', scope),
+    ...nwLines('["aeroway"="aerodrome"]', scope),
+  ];
+  return `
+[out:json][timeout:12];
+(
+  ${lines.join('\n  ')}
+);
+out center tags qt;
+  `.trim();
+}
+
+/** Fast bbox query for selected decor types only */
+function buildFastBboxQuery(south, west, north, east, decorNames) {
+  const relevant = DECOR_MAPPINGS.filter((d) => decorNames.includes(d.name));
+  if (!relevant.length) return null;
+  const bbox = `${south},${west},${north},${east}`;
+  const tagsByKey = {};
+  const compound = new Set();
+
+  relevant.forEach((decor) => {
+    (decor.tags || []).forEach((tag) => {
+      if (!tagsByKey[tag.key]) tagsByKey[tag.key] = new Set();
+      tagsByKey[tag.key].add(tag.value);
+    });
+    (decor.tagGroups || []).forEach((group) => {
+      const predicates = group.map((t) => `["${t.key}"="${t.value}"]`).join('');
+      compound.add(predicates);
+    });
+  });
+
+  const lines = [];
+  for (const [key, values] of Object.entries(tagsByKey)) {
+    const arr = [...values];
+    const filter =
+      arr.length === 1
+        ? `["${key}"="${arr[0]}"]`
+        : `["${key}"~"^(${arr.map((v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$"]`;
+    lines.push(...nwLines(filter, bbox));
+  }
+  compound.forEach((predicates) => {
+    lines.push(...nwLines(predicates, bbox));
+  });
+
+  return `
+[out:json][timeout:15];
+(
+  ${lines.join('\n  ')}
+);
+out center tags qt;
+  `.trim();
+}
+
+/**
+ * Race Overpass mirrors in parallel — first OK response wins.
+ * Much faster from the US than trying Europe mirrors one-by-one.
+ */
+async function queryOverpass(query, { timeoutMs = 16000, signal } = {}) {
+  const key = cacheKey(query);
+  const cached = cacheGet(key);
+  if (cached) return cached;
+
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+  const errors = [];
+  const controllers = [];
+
+  const winner = await new Promise((resolve, reject) => {
+    let settled = false;
+    let pending = OVERPASS_SERVERS.length;
+
+    const failOne = (err) => {
+      errors.push(err);
+      pending -= 1;
+      if (!settled && pending === 0) {
+        reject(errors.find((e) => e?.name !== 'AbortError') || errors[0] || new Error('Overpass failed'));
+      }
+    };
+
+    const onExternalAbort = () => {
+      controllers.forEach((c) => c.abort());
+      if (!settled) {
+        settled = true;
+        reject(new DOMException('Aborted', 'AbortError'));
+      }
+    };
+    signal?.addEventListener('abort', onExternalAbort, { once: true });
+
+    OVERPASS_SERVERS.forEach((server) => {
+      const ctrl = new AbortController();
+      controllers.push(ctrl);
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+
+      fetch(server, {
+        method: 'POST',
+        body: query,
+        headers: { 'Content-Type': 'text/plain', Accept: 'application/json' },
+        signal: ctrl.signal,
+      })
+        .then(async (res) => {
+          clearTimeout(timer);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          if (settled) return;
+          settled = true;
+          controllers.forEach((c) => {
+            if (c !== ctrl) c.abort();
+          });
+          signal?.removeEventListener('abort', onExternalAbort);
+          resolve(data.elements || []);
+        })
+        .catch((err) => {
+          clearTimeout(timer);
+          failOne(err);
+        });
+    });
+  });
+
+  cacheSet(key, winner);
+  return winner;
+}
+
 async function geocode(q) {
   const trimmed = q.trim();
+  const gKey = LS_PREFIX + 'geo:' + trimmed.toLowerCase();
+  try {
+    const raw = localStorage.getItem(gKey);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Date.now() - parsed.at < GEOCODE_TTL_MS) return parsed.hit;
+    }
+  } catch {
+    /* ignore */
+  }
+
   const url = new URL(`${NOMINATIM}/search`);
   url.searchParams.set('format', 'json');
   url.searchParams.set('limit', '1');
@@ -168,15 +320,11 @@ async function geocode(q) {
   }
 
   const res = await fetch(url.toString(), {
-    headers: {
-      Accept: 'application/json',
-      'Accept-Language': 'en-US',
-    },
+    headers: { Accept: 'application/json', 'Accept-Language': 'en-US' },
   });
   if (!res.ok) throw new Error('Geocode failed');
   let data = await res.json();
 
-  // Fallback without country filter if US-restricted search misses
   if (!data.length && !zipMatch) {
     const url2 = new URL(`${NOMINATIM}/search`);
     url2.searchParams.set('format', 'json');
@@ -187,21 +335,18 @@ async function geocode(q) {
   }
 
   if (!data.length) return null;
-  const hit = data[0];
-  const bb = hit.boundingbox; // [south, north, west, east]
-  return {
-    lat: parseFloat(hit.lat),
-    lon: parseFloat(hit.lon),
-    label: hit.display_name,
-    bbox: bb
-      ? {
-          south: parseFloat(bb[0]),
-          north: parseFloat(bb[1]),
-          west: parseFloat(bb[2]),
-          east: parseFloat(bb[3]),
-        }
-      : null,
+  const hitRaw = data[0];
+  const hit = {
+    lat: parseFloat(hitRaw.lat),
+    lon: parseFloat(hitRaw.lon),
+    label: hitRaw.display_name,
   };
+  try {
+    localStorage.setItem(gKey, JSON.stringify({ at: Date.now(), hit }));
+  } catch {
+    /* ignore */
+  }
+  return hit;
 }
 
 function cancelInFlight() {
@@ -333,24 +478,26 @@ function plotResults(items) {
 }
 
 async function fetchNearbyElements(lat, lon, signal) {
-  const query = buildOverpassQuery(lat, lon, DETECTOR_RANGE);
-  const elements = await queryOverpass(query, { signal, timeoutMs: 25000 });
+  const query = buildFastAroundQuery(lat, lon, DETECTOR_RANGE);
+  const elements = await queryOverpass(query, { signal, timeoutMs: 14000 });
   return { elements, source: 'live' };
 }
 
 async function scanNearby(lat, lon, { fly = true, zoom = 16 } = {}) {
   const signal = cancelInFlight();
   setScanCenter(lat, lon, { fly, zoom });
-  setStatus(`Scanning ${DETECTOR_RANGE} m for decor…`, true);
+  setStatus(`Scanning ${DETECTOR_RANGE} m…`, true);
+  const t0 = performance.now();
   try {
     const { elements } = await fetchNearbyElements(lat, lon, signal);
     const items = elementsToResults(elements, { lat, lon });
     plotResults(items);
     renderResults(items);
+    const ms = Math.round(performance.now() - t0);
     setStatus(
       items.length
-        ? `Found ${items.length} decor spot${items.length === 1 ? '' : 's'}.`
-        : `No mapped decor within ${DETECTOR_RANGE} m.`
+        ? `Found ${items.length} decor spot${items.length === 1 ? '' : 's'} (${ms} ms).`
+        : `No mapped decor within ${DETECTOR_RANGE} m (${ms} ms).`
     );
   } catch (err) {
     if (err.name === 'AbortError') return;
@@ -374,7 +521,6 @@ async function browseDecorInView(decorNames) {
   setStatus(`Finding ${label} near ${areaNote}…`, true);
   clearMapOverlays({ keepMarkers: false });
 
-  // Keep the camera on the searched area while loading
   map.fitBounds(
     [
       [bbox.south, bbox.west],
@@ -383,15 +529,20 @@ async function browseDecorInView(decorNames) {
     { padding: [28, 28], maxZoom: 15, animate: true }
   );
 
+  const t0 = performance.now();
   try {
-    const query = buildOverpassBboxQueryMulti(
+    const query = buildFastBboxQuery(
       bbox.south,
       bbox.west,
       bbox.north,
       bbox.east,
       names
     );
-    const elements = await queryOverpass(query, { signal, timeoutMs: 40000 });
+    if (!query) {
+      setStatus('No decor types selected.');
+      return;
+    }
+    const elements = await queryOverpass(query, { signal, timeoutMs: 16000 });
 
     const nameSet = new Set(names);
     const origin = {
@@ -404,20 +555,21 @@ async function browseDecorInView(decorNames) {
 
     plotResults(items);
     renderResults(items);
+    const ms = Math.round(performance.now() - t0);
 
     if (items.length) {
       const group = L.featureGroup(items.map((i) => i.marker));
       map.fitBounds(group.getBounds().pad(0.12), { maxZoom: 15, animate: true });
       setStatus(
-        `${items.length} place${items.length === 1 ? '' : 's'} · ${label} in ${areaNote}.`
+        `${items.length} place${items.length === 1 ? '' : 's'} · ${label} (${ms} ms).`
       );
     } else {
-      setStatus(`No matching spots for ${label} in ${areaNote} on OSM.`);
+      setStatus(`No matching spots for ${label} in ${areaNote} (${ms} ms).`);
     }
   } catch (err) {
     if (err.name === 'AbortError') return;
     console.error(err);
-    setStatus('Browse request failed. Zoom in a bit and try again.');
+    setStatus('Browse request failed. Try fewer types or a smaller area.');
   }
 }
 
@@ -535,27 +687,19 @@ function bindUi() {
         return;
       }
       activeAreaLabel = hit.label;
-      // Remember this ZIP/city so Find-a-decor queries HERE, not an old cache area
-      if (hit.bbox) {
-        activeSearchBbox = { ...hit.bbox };
-        map.fitBounds(
-          [
-            [hit.bbox.south, hit.bbox.west],
-            [hit.bbox.north, hit.bbox.east],
-          ],
-          { padding: [28, 28], maxZoom: 15, animate: true }
-        );
-      } else {
-        // Approximate a small city window around the point
-        const pad = 0.06;
-        activeSearchBbox = {
-          south: hit.lat - pad,
-          north: hit.lat + pad,
-          west: hit.lon - pad,
-          east: hit.lon + pad,
-        };
-      }
-      await scanNearby(hit.lat, hit.lon, { fly: !hit.bbox, zoom: 15 });
+      // Compact window around the point (full ZIP polygons are huge → slow Overpass)
+      activeSearchBbox = areaAround(hit.lat, hit.lon);
+      map.fitBounds(
+        [
+          [activeSearchBbox.south, activeSearchBbox.west],
+          [activeSearchBbox.north, activeSearchBbox.east],
+        ],
+        { padding: [28, 28], maxZoom: 14, animate: true }
+      );
+      setScanCenter(hit.lat, hit.lon, { fly: false, zoom: 14 });
+      setStatus(
+        `Ready: ${hit.label.split(',').slice(0, 2).join(',')}. Pick decor types → Show, or Scan nearby.`
+      );
     } catch (err) {
       console.error(err);
       setStatus('Address lookup failed.');
@@ -576,13 +720,7 @@ function bindUi() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         activeAreaLabel = 'your location';
-        const pad = 0.05;
-        activeSearchBbox = {
-          south: pos.coords.latitude - pad,
-          north: pos.coords.latitude + pad,
-          west: pos.coords.longitude - pad,
-          east: pos.coords.longitude + pad,
-        };
+        activeSearchBbox = areaAround(pos.coords.latitude, pos.coords.longitude);
         scanNearby(pos.coords.latitude, pos.coords.longitude);
       },
       () => setStatus('Location permission blocked.'),
@@ -604,13 +742,7 @@ async function boot() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         activeAreaLabel = 'your location';
-        const pad = 0.05;
-        activeSearchBbox = {
-          south: pos.coords.latitude - pad,
-          north: pos.coords.latitude + pad,
-          west: pos.coords.longitude - pad,
-          east: pos.coords.longitude + pad,
-        };
+        activeSearchBbox = areaAround(pos.coords.latitude, pos.coords.longitude);
         scanNearby(pos.coords.latitude, pos.coords.longitude, { zoom: 15 });
       },
       () => {
