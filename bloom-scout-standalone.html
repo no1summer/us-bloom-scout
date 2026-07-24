@@ -414,6 +414,45 @@ input[type="search"]:focus {
 
 .browse-actions { display: grid; grid-template-columns: 1fr auto; gap: 0.4rem; }
 
+.pure-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  line-height: 1.35;
+  cursor: pointer;
+  user-select: none;
+}
+.pure-toggle input {
+  margin-top: 0.15rem;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--leaf);
+  flex-shrink: 0;
+}
+.pure-toggle em { font-style: normal; opacity: 0.85; }
+
+.pure-tag {
+  display: inline-block;
+  margin-left: 0.25rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  background: #f0c346;
+  color: #3d2b00;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+.result-item.is-pure {
+  border-color: rgba(240, 195, 70, 0.65);
+  background: linear-gradient(180deg, rgba(255, 248, 220, 0.95), rgba(255,255,255,0.9));
+}
+.decor-marker.is-pure {
+  z-index: 2;
+}
+
 .status {
   min-height: 1.2rem;
   font-size: 0.75rem;
@@ -623,8 +662,8 @@ input[type="search"]:focus {
   }
   .primary-btn, .ghost-btn { font-size: 0.84rem; }
 }
-</style></head><body>
-
+</style>
+</head><body>
   <div class="app">
     <header class="brand-bar">
       <div class="brand">
@@ -701,6 +740,10 @@ input[type="search"]:focus {
             <button type="button" id="btn-find" class="primary-btn" disabled>Show in area</button>
             <button type="button" id="btn-clear" class="ghost-btn">Clear</button>
           </div>
+          <label class="pure-toggle">
+            <input type="checkbox" id="pure-only" />
+            <span>Pure only <em>(sole spot in its smallest ~100&nbsp;m region)</em></span>
+          </label>
 
           <div class="status" id="status" aria-live="polite"></div>
 
@@ -1867,12 +1910,19 @@ function setAreaPin(lat, lon, { zoom = 14, fly = true, bbox = null } = {}) {
   else map.setView([lat, lon], zoom, { animate: false });
 }
 
-function markerIcon(decor) {
+function markerIcon(decor, { pure = false } = {}) {
+  const size = pure ? 44 : 34;
+  const ring = pure
+    ? 'box-shadow:0 0 0 3px #f0c346,0 0 0 6px rgba(240,195,70,0.35),0 8px 16px rgba(0,0,0,0.25);'
+    : 'box-shadow:0 6px 14px rgba(0,0,0,0.22);';
+  const badge = pure
+    ? `<span style="position:absolute;top:-6px;right:-6px;background:#f0c346;color:#3d2b00;font-size:9px;font-weight:800;border-radius:999px;padding:1px 4px;border:1px solid #fff;">P</span>`
+    : '';
   return L.divIcon({
     className: '',
-    html: `<div class="decor-marker" style="background:${decor.color}">${decor.icon}</div>`,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
+    html: `<div class="decor-marker${pure ? ' is-pure' : ''}" style="width:${size}px;height:${size}px;background:${decor.color};${ring};position:relative">${decor.icon}${badge}</div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
 }
 
@@ -1884,22 +1934,89 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+/**
+ * Pure = only decor place in its smallest local region.
+ * The region radius is min(distance to nearest other result, DETECTOR_RANGE).
+ * A spot is pure when nothing else (any type) sits inside that smallest cell —
+ * i.e. it is the sole spot in its local neighborhood.
+ * Rank: most isolated first (largest empty radius around them).
+ */
+function annotatePureSpots(items) {
+  const RANGE = typeof DETECTOR_RANGE === 'number' ? DETECTOR_RANGE : 100;
+
+  for (const item of items) {
+    let nearestOther = Infinity; // any other place
+    let nearestOtherType = Infinity; // different decor type
+    const typesInRange = new Set([item.decor.name]);
+    let othersInRange = 0;
+
+    for (const other of items) {
+      if (other === item || other.id === item.id) continue;
+      // Same OSM place listed under multiple types — treat as same point
+      if (other.placeKey && item.placeKey && other.placeKey === item.placeKey) {
+        typesInRange.add(other.decor.name);
+        continue;
+      }
+      const d = haversine(item.lat, item.lon, other.lat, other.lon);
+      if (d < nearestOther) nearestOther = d;
+      if (other.decor.name !== item.decor.name && d < nearestOtherType) {
+        nearestOtherType = d;
+      }
+      if (d <= RANGE) {
+        othersInRange += 1;
+        typesInRange.add(other.decor.name);
+      }
+    }
+
+    // Smallest region that still only contains this spot (= distance to nearest neighbor)
+    const aloneRadius =
+      nearestOther === Infinity ? RANGE : Math.min(nearestOther, RANGE);
+
+    item.aloneRadiusM = aloneRadius;
+    item.isolationM = nearestOther === Infinity ? 1e9 : nearestOther;
+    item.typesInRange = [...typesInRange];
+    // Only one place in the smallest local region (nothing else within detector range)
+    item.soleInSmallestRegion = othersInRange === 0;
+    // Also require a single decor category at this OSM place when possible
+    item.purePlace = (item.matchCount || 1) === 1;
+    item.pure = item.soleInSmallestRegion;
+    // Score: prefer truly alone spots; then larger isolation (more empty around them)
+    item.pureScore = (item.pure ? 1e9 : 0) + item.isolationM + (item.purePlace ? 1e3 : 0);
+  }
+
+  items.sort((a, b) => {
+    if (b.pureScore !== a.pureScore) return b.pureScore - a.pureScore;
+    return (a.dist ?? 0) - (b.dist ?? 0);
+  });
+  return items;
+}
+
 function renderResults(items) {
   lastResults = items;
   const list = $('#results');
   list.innerHTML = '';
-  $('#result-count').textContent = `${items.length} place${items.length === 1 ? '' : 's'}`;
+  const pureN = items.filter((i) => i.pure).length;
+  $('#result-count').textContent =
+    `${items.length} place${items.length === 1 ? '' : 's'}` +
+    (pureN ? ` · ${pureN} pure` : '');
 
   items.forEach((item) => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'result-item';
+    btn.className = 'result-item' + (item.pure ? ' is-pure' : '');
     btn.style.setProperty('--accent', item.decor.color);
+    const pureTag = item.pure
+      ? `<span class="pure-tag" title="Only decor spot within ~${item.aloneRadiusM != null ? Math.round(item.aloneRadiusM) : 100} m">PURE</span>`
+      : '';
     btn.innerHTML = `
       <span class="badge">${item.decor.icon}</span>
       <span class="meta">
-        <div class="title">${escapeHtml(item.name)}</div>
-        <div class="sub">${escapeHtml(item.decor.name)}${item.decor.costume ? ` · ${escapeHtml(item.decor.costume)}` : ''}</div>
+        <div class="title">${escapeHtml(item.name)} ${pureTag}</div>
+        <div class="sub">${escapeHtml(item.decor.name)}${item.decor.costume ? ` · ${escapeHtml(item.decor.costume)}` : ''}${
+          item.pure
+            ? ` · alone in ~${Math.round(item.aloneRadiusM || 100)} m`
+            : ''
+        }</div>
       </span>
       <span class="dist">${item.dist != null ? `${item.dist} m` : ''}</span>
     `;
@@ -1927,10 +2044,13 @@ function elementsToResults(elements, origin) {
     for (const decor of matches) {
       out.push({
         id: `${key}:${decor.name}`,
+        placeKey: key,
         name: placeName(el.tags),
         lat: pos.lat,
         lon: pos.lon,
         decor,
+        matchCount: matches.length,
+        matchNames: matches.map((m) => m.name),
         dist: origin ? haversine(origin.lat, origin.lon, pos.lat, pos.lon) : null,
         tags: el.tags,
       });
@@ -1943,10 +2063,20 @@ function elementsToResults(elements, origin) {
 function plotResults(items) {
   markersLayer.clearLayers();
   for (const item of items) {
-    const marker = L.marker([item.lat, item.lon], { icon: markerIcon(item.decor) })
+    const marker = L.marker([item.lat, item.lon], {
+      icon: markerIcon(item.decor, { pure: !!item.pure }),
+      zIndexOffset: item.pure ? 500 : 0,
+    })
       .bindPopup(
-        `<strong>${escapeHtml(item.name)}</strong><br>${escapeHtml(item.decor.name)}` +
+        `<strong>${escapeHtml(item.name)}</strong>` +
+          (item.pure
+            ? `<br><span style="color:#9a6b00;font-weight:700">✦ PURE</span> — only decor spot in its smallest region (~${Math.round(item.aloneRadiusM || 100)}&nbsp;m)`
+            : '') +
+          `<br>${escapeHtml(item.decor.name)}` +
           (item.decor.costume ? `<br><em>${escapeHtml(item.decor.costume)}</em>` : '') +
+          (item.matchCount > 1
+            ? `<br><span style="opacity:.75">Also tagged: ${escapeHtml(item.matchNames.join(', '))}</span>`
+            : '') +
           (item.dist != null ? `<br>${item.dist} m away` : '')
       )
       .addTo(markersLayer);
@@ -1968,7 +2098,6 @@ async function browseDecorInView(decorNames) {
     names.length === 1 ? names[0] : `${names.length} decor types`;
   setStatus(`Finding ${label} near ${areaNote}…`, true);
 
-  // Keep pin/area; only clear decor markers
   markersLayer.clearLayers();
 
   pauseAutoZip(2000);
@@ -2000,22 +2129,33 @@ async function browseDecorInView(decorNames) {
       lat: (bbox.south + bbox.north) / 2,
       lon: (bbox.west + bbox.east) / 2,
     };
-    const items = elementsToResults(elements, origin).filter((i) =>
+    let items = elementsToResults(elements, origin).filter((i) =>
       nameSet.has(i.decor.name)
     );
+    annotatePureSpots(items);
+
+    const pureOnly = $('#pure-only')?.checked;
+    if (pureOnly) items = items.filter((i) => i.pure);
 
     plotResults(items);
     renderResults(items);
     const ms = Math.round(performance.now() - t0);
+    const pureN = items.filter((i) => i.pure).length;
 
     if (items.length) {
       const group = L.featureGroup(items.map((i) => i.marker));
       map.fitBounds(group.getBounds().pad(0.12), { maxZoom: 15, animate: true });
       setStatus(
-        `${items.length} place${items.length === 1 ? '' : 's'} · ${label} (${ms} ms).`
+        `${items.length} place${items.length === 1 ? '' : 's'}` +
+          (pureN ? ` · ${pureN} pure (alone in smallest region)` : '') +
+          ` (${ms} ms).`
       );
     } else {
-      setStatus(`No matching spots for ${label} in ${areaNote} (${ms} ms).`);
+      setStatus(
+        pureOnly
+          ? `No pure spots for ${label} in ${areaNote}.`
+          : `No matching spots for ${label} in ${areaNote} (${ms} ms).`
+      );
     }
   } catch (err) {
     if (err.name === 'AbortError') return;
@@ -2273,6 +2413,12 @@ function bindUi() {
         $('#panel-handle')?.setAttribute('aria-expanded', 'true');
         setTimeout(refreshMapSize, 280);
       }
+      browseDecorInView(selectedDecors);
+    }
+  });
+
+  $('#pure-only')?.addEventListener('change', () => {
+    if (selectedDecors.size && lastResults.length) {
       browseDecorInView(selectedDecors);
     }
   });
