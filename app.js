@@ -24,9 +24,6 @@ const MAX_BBOX_SPAN_DEG = 0.35;
 const queryCache = new Map();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-/** Optional seed cache (speeds one US area if present) — never required */
-let seedCache = null;
-
 let map;
 let markersLayer;
 let centerMarker;
@@ -38,6 +35,8 @@ let activeAbort = null;
 let lastCenter = { lat: DEFAULT.lat, lon: DEFAULT.lon };
 /** Active search/area label for status messages */
 let activeAreaLabel = 'map view';
+/** Bbox from last ZIP/city search — used by Find a decor */
+let activeSearchBbox = null;
 let lastResults = [];
 
 const $ = (sel) => document.querySelector(sel);
@@ -70,11 +69,6 @@ function placeName(tags = {}) {
   return tags.name || tags['name:en'] || tags.brand || tags.operator || 'Unnamed place';
 }
 
-function inBbox(lat, lon, bbox) {
-  if (!bbox) return false;
-  return lat >= bbox.south && lat <= bbox.north && lon >= bbox.west && lon <= bbox.east;
-}
-
 function clampBbox(bbox) {
   let { south, west, north, east } = bbox;
   const latSpan = north - south;
@@ -102,52 +96,19 @@ function mapViewportBbox() {
   });
 }
 
-async function loadSeedCache() {
-  try {
-    const res = await fetch('data/seed-cache.json', { cache: 'force-cache' });
-    if (!res.ok) return null;
-    seedCache = await res.json();
-    return seedCache;
-  } catch {
-    return null;
-  }
-}
-
-function filterSeedAround(lat, lon, radiusM) {
-  if (!seedCache?.elements || !seedCache.bbox) return null;
-  if (!inBbox(lat, lon, seedCache.bbox)) return null;
-  return seedCache.elements.filter((el) => {
-    const pos = elementLatLon(el);
-    if (!pos || !el.tags) return false;
-    return haversine(lat, lon, pos.lat, pos.lon) <= radiusM;
-  });
-}
-
-function filterSeedByDecorInBbox(decorNames, bbox) {
-  if (!seedCache?.elements || !seedCache.bbox) return null;
-  const names = new Set(decorNames);
-  // Only use seed when viewport overlaps seed area
-  const overlap =
-    bbox.south < seedCache.bbox.north &&
-    bbox.north > seedCache.bbox.south &&
-    bbox.west < seedCache.bbox.east &&
-    bbox.east > seedCache.bbox.west;
-  if (!overlap) return null;
-  return seedCache.elements.filter((el) => {
-    const pos = elementLatLon(el);
-    if (!pos || !el.tags) return false;
-    if (!inBbox(pos.lat, pos.lon, bbox)) return false;
-    return matchDecorCategories(el.tags).some((d) => names.has(d.name));
-  });
+/** Prefer last searched ZIP/city bbox; otherwise current map view */
+function browseTargetBbox() {
+  if (activeSearchBbox) return clampBbox(activeSearchBbox);
+  return mapViewportBbox();
 }
 
 function updateFindButton() {
   const btn = $('#btn-find');
   const n = selectedDecors.size;
   btn.disabled = n === 0;
-  if (n === 0) btn.textContent = 'Show in map view';
-  else if (n === 1) btn.textContent = 'Show 1 type in view';
-  else btn.textContent = `Show ${n} types in view`;
+  if (n === 0) btn.textContent = 'Show in area';
+  else if (n === 1) btn.textContent = 'Show 1 type in area';
+  else btn.textContent = `Show ${n} types in area`;
 }
 
 async function queryOverpass(query, { timeoutMs = 28000, signal } = {}) {
@@ -372,8 +333,6 @@ function plotResults(items) {
 }
 
 async function fetchNearbyElements(lat, lon, signal) {
-  const seeded = filterSeedAround(lat, lon, DETECTOR_RANGE);
-  if (seeded) return { elements: seeded, source: 'cache' };
   const query = buildOverpassQuery(lat, lon, DETECTOR_RANGE);
   const elements = await queryOverpass(query, { signal, timeoutMs: 25000 });
   return { elements, source: 'live' };
@@ -384,14 +343,13 @@ async function scanNearby(lat, lon, { fly = true, zoom = 16 } = {}) {
   setScanCenter(lat, lon, { fly, zoom });
   setStatus(`Scanning ${DETECTOR_RANGE} m for decor…`, true);
   try {
-    const { elements, source } = await fetchNearbyElements(lat, lon, signal);
+    const { elements } = await fetchNearbyElements(lat, lon, signal);
     const items = elementsToResults(elements, { lat, lon });
     plotResults(items);
     renderResults(items);
-    const note = source === 'cache' ? ' · cached' : '';
     setStatus(
       items.length
-        ? `Found ${items.length} decor spot${items.length === 1 ? '' : 's'}${note}.`
+        ? `Found ${items.length} decor spot${items.length === 1 ? '' : 's'}.`
         : `No mapped decor within ${DETECTOR_RANGE} m.`
     );
   } catch (err) {
@@ -401,39 +359,48 @@ async function scanNearby(lat, lon, { fly = true, zoom = 16 } = {}) {
   }
 }
 
-/** Find selected decor type(s) in the current map view (any ZIP / city / pan) */
+/** Find selected decor type(s) in the searched ZIP/city (or current map view) */
 async function browseDecorInView(decorNames) {
   const names = [...decorNames];
   if (!names.length) return;
   const signal = cancelInFlight();
 
-  const bbox = mapViewportBbox();
+  const bbox = browseTargetBbox();
+  const areaNote = activeSearchBbox
+    ? activeAreaLabel.split(',').slice(0, 2).join(',')
+    : 'current map view';
   const label =
     names.length === 1 ? names[0] : `${names.length} decor types`;
-  setStatus(`Finding ${label} in current map view…`, true);
+  setStatus(`Finding ${label} near ${areaNote}…`, true);
   clearMapOverlays({ keepMarkers: false });
 
+  // Keep the camera on the searched area while loading
+  map.fitBounds(
+    [
+      [bbox.south, bbox.west],
+      [bbox.north, bbox.east],
+    ],
+    { padding: [28, 28], maxZoom: 15, animate: true }
+  );
+
   try {
-    let elements = filterSeedByDecorInBbox(names, bbox);
-    let source = 'cache';
-    if (!elements) {
-      const query = buildOverpassBboxQueryMulti(
-        bbox.south,
-        bbox.west,
-        bbox.north,
-        bbox.east,
-        names
-      );
-      elements = await queryOverpass(query, { signal, timeoutMs: 40000 });
-      source = 'live';
-    }
+    const query = buildOverpassBboxQueryMulti(
+      bbox.south,
+      bbox.west,
+      bbox.north,
+      bbox.east,
+      names
+    );
+    const elements = await queryOverpass(query, { signal, timeoutMs: 40000 });
 
     const nameSet = new Set(names);
-    const origin = map.getCenter();
-    const items = elementsToResults(elements, {
-      lat: origin.lat,
-      lon: origin.lng,
-    }).filter((i) => nameSet.has(i.decor.name));
+    const origin = {
+      lat: (bbox.south + bbox.north) / 2,
+      lon: (bbox.west + bbox.east) / 2,
+    };
+    const items = elementsToResults(elements, origin).filter((i) =>
+      nameSet.has(i.decor.name)
+    );
 
     plotResults(items);
     renderResults(items);
@@ -442,12 +409,10 @@ async function browseDecorInView(decorNames) {
       const group = L.featureGroup(items.map((i) => i.marker));
       map.fitBounds(group.getBounds().pad(0.12), { maxZoom: 15, animate: true });
       setStatus(
-        `${items.length} place${items.length === 1 ? '' : 's'} · ${label} in view` +
-          (source === 'cache' ? ' · cached' : '') +
-          `.`
+        `${items.length} place${items.length === 1 ? '' : 's'} · ${label} in ${areaNote}.`
       );
     } else {
-      setStatus(`No matching spots for ${label} in this map view on OSM.`);
+      setStatus(`No matching spots for ${label} in ${areaNote} on OSM.`);
     }
   } catch (err) {
     if (err.name === 'AbortError') return;
@@ -517,6 +482,8 @@ function initMap() {
   map.on('click', (e) => {
     if (mode === 'nearby') {
       activeAreaLabel = 'map pin';
+      // Pin click: browse should follow the map view, not an old ZIP
+      activeSearchBbox = null;
       scanNearby(e.latlng.lat, e.latlng.lng);
     }
   });
@@ -538,6 +505,8 @@ function bindUi() {
   $('#btn-clear').addEventListener('click', () => {
     cancelInFlight();
     selectedDecors.clear();
+    activeSearchBbox = null;
+    activeAreaLabel = 'map view';
     updateFindButton();
     buildDecorGrid($('#decor-filter').value);
     clearMapOverlays();
@@ -548,6 +517,7 @@ function bindUi() {
   $('#btn-scan').addEventListener('click', () => {
     const c = map.getCenter();
     activeAreaLabel = 'map center';
+    activeSearchBbox = null;
     scanNearby(c.lat, c.lng);
   });
 
@@ -565,7 +535,9 @@ function bindUi() {
         return;
       }
       activeAreaLabel = hit.label;
+      // Remember this ZIP/city so Find-a-decor queries HERE, not an old cache area
       if (hit.bbox) {
+        activeSearchBbox = { ...hit.bbox };
         map.fitBounds(
           [
             [hit.bbox.south, hit.bbox.west],
@@ -573,6 +545,15 @@ function bindUi() {
           ],
           { padding: [28, 28], maxZoom: 15, animate: true }
         );
+      } else {
+        // Approximate a small city window around the point
+        const pad = 0.06;
+        activeSearchBbox = {
+          south: hit.lat - pad,
+          north: hit.lat + pad,
+          west: hit.lon - pad,
+          east: hit.lon + pad,
+        };
       }
       await scanNearby(hit.lat, hit.lon, { fly: !hit.bbox, zoom: 15 });
     } catch (err) {
@@ -595,6 +576,13 @@ function bindUi() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         activeAreaLabel = 'your location';
+        const pad = 0.05;
+        activeSearchBbox = {
+          south: pos.coords.latitude - pad,
+          north: pos.coords.latitude + pad,
+          west: pos.coords.longitude - pad,
+          east: pos.coords.longitude + pad,
+        };
         scanNearby(pos.coords.latitude, pos.coords.longitude);
       },
       () => setStatus('Location permission blocked.'),
@@ -610,13 +598,19 @@ async function boot() {
   initMap();
   bindUi();
   setStatus('Search any US ZIP or city — or use your location.');
-  await loadSeedCache();
 
   // Prefer device location on first load when available
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         activeAreaLabel = 'your location';
+        const pad = 0.05;
+        activeSearchBbox = {
+          south: pos.coords.latitude - pad,
+          north: pos.coords.latitude + pad,
+          west: pos.coords.longitude - pad,
+          east: pos.coords.longitude + pad,
+        };
         scanNearby(pos.coords.latitude, pos.coords.longitude, { zoom: 15 });
       },
       () => {
