@@ -313,7 +313,6 @@ input[type="search"]:focus {
   background: rgba(255,255,255,0.55);
   padding: 0.65rem;
   overflow: hidden;
-  /* Prefer flex grow so chips keep a usable tap area */
   flex: 1 1 auto;
 }
 
@@ -368,16 +367,16 @@ input[type="search"]:focus {
 .decor-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.4rem;
-  max-height: 168px;
-  min-height: 120px;
+  gap: 0.45rem;
+  max-height: min(48vh, 420px);
+  min-height: 240px;
   overflow-x: hidden;
   overflow-y: auto;
   margin: 0;
-  padding: 0.1rem 0.15rem 0.25rem 0;
+  padding: 0.15rem 0.2rem 0.35rem 0;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  touch-action: manipulation;
+  touch-action: pan-y;
   flex: 1 1 auto;
 }
 .decor-empty {
@@ -409,6 +408,7 @@ input[type="search"]:focus {
   touch-action: manipulation;
   position: relative;
   z-index: 1;
+  -webkit-tap-highlight-color: rgba(63,154,69,0.25);
 }
 .decor-chip:active {
   background: rgba(111,191,74,0.22);
@@ -605,8 +605,6 @@ input[type="search"]:focus {
     padding: 0.5rem 0.75rem;
   }
   .brand-text p { display: none; }
-  .support-label { display: none; }
-  .support-row-panel .support-label { display: inline; }
 
   .stage {
     margin: 0;
@@ -626,8 +624,7 @@ input[type="search"]:focus {
     right: 0;
     bottom: 0;
     width: auto;
-    /* Tall enough by default that decor chips are actually tappable */
-    max-height: min(72dvh, 640px);
+    max-height: min(88dvh, 760px);
     border-radius: 20px 20px 0 0;
     border-left: none;
     border-right: none;
@@ -636,61 +633,63 @@ input[type="search"]:focus {
     transition: max-height 0.28s ease;
   }
   .panel.is-expanded {
-    max-height: min(88dvh, 920px);
+    max-height: min(92dvh, 920px);
   }
   .panel.is-collapsed {
-    max-height: 34dvh;
+    max-height: 30dvh;
   }
   .panel-handle { display: block; flex: 0 0 auto; }
   .panel-scroll {
-    padding: 0.25rem 0.85rem 0.5rem;
+    padding: 0.2rem 0.75rem 0.35rem;
     overflow: auto;
     flex: 1 1 auto;
     min-height: 0;
   }
   .panel-dock {
-    padding: 0.5rem 0.85rem calc(0.65rem + var(--safe-bottom));
+    padding: 0.45rem 0.75rem calc(0.55rem + var(--safe-bottom));
   }
 
-  .hint {
-    font-size: 0.72rem;
-  }
+  .hint { display: none; }
 
   .decor-picker {
-    /* Must keep room for the chip list — this was collapsing to ~0px before */
     flex: 1 1 auto;
-    min-height: 220px;
+    min-height: 52dvh;
     max-height: none;
   }
 
   .decor-grid {
     grid-template-columns: 1fr;
     flex: 1 1 auto;
-    min-height: 160px;
-    max-height: min(42dvh, 360px);
+    min-height: 46dvh;
+    max-height: none;
+    height: 46dvh;
+  }
+
+  .results {
+    max-height: 28vh;
   }
 
   .leaflet-bottom.leaflet-right {
-    bottom: calc(min(72dvh, 640px) + 8px);
+    bottom: calc(min(88dvh, 760px) + 8px);
     transition: bottom 0.28s ease;
   }
   .stage:has(.panel.is-expanded) .leaflet-bottom.leaflet-right {
-    bottom: calc(min(88dvh, 920px) + 8px);
+    bottom: calc(min(92dvh, 920px) + 8px);
   }
   .stage:has(.panel.is-collapsed) .leaflet-bottom.leaflet-right {
-    bottom: calc(34dvh + 8px);
+    bottom: calc(30dvh + 8px);
   }
 
   .leaflet-control-attribution {
     max-width: 55vw;
     font-size: 9px !important;
-    margin-bottom: calc(min(72dvh, 640px) + 4px) !important;
+    margin-bottom: calc(min(88dvh, 760px) + 4px) !important;
   }
   .stage:has(.panel.is-expanded) .leaflet-control-attribution {
-    margin-bottom: calc(min(88dvh, 920px) + 4px) !important;
+    margin-bottom: calc(min(92dvh, 920px) + 4px) !important;
   }
   .stage:has(.panel.is-collapsed) .leaflet-control-attribution {
-    margin-bottom: calc(34dvh + 4px) !important;
+    margin-bottom: calc(30dvh + 4px) !important;
   }
 }
 

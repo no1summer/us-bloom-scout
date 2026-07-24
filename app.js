@@ -772,41 +772,44 @@ function toggleDecor(name) {
   if (selectedDecors.has(name)) selectedDecors.delete(name);
   else selectedDecors.add(name);
   updateFindButton();
-  buildDecorGrid($('#decor-filter')?.value || '');
+  paintSelectedPills();
+  // Update chip state in place — rebuilding the whole grid breaks mobile taps
+  const chip = [...document.querySelectorAll('#decor-grid .decor-chip')].find(
+    (el) => el.dataset.decor === name
+  );
+  if (chip) {
+    const on = selectedDecors.has(name);
+    chip.classList.toggle('is-selected', on);
+    chip.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+}
+
+function paintSelectedPills() {
+  const selectedWrap = $('#decor-selected');
+  if (!selectedWrap) return;
+  selectedWrap.innerHTML = '';
+  if (selectedDecors.size === 0) {
+    selectedWrap.hidden = true;
+    return;
+  }
+  selectedWrap.hidden = false;
+  [...selectedDecors].forEach((name) => {
+    const decor = DECOR_MAPPINGS.find((d) => d.name === name);
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'decor-pill';
+    pill.dataset.decor = name;
+    pill.title = 'Remove ' + name;
+    pill.innerHTML = `${decor?.icon || ''} ${name} <span class="x">×</span>`;
+    selectedWrap.appendChild(pill);
+  });
 }
 
 function buildDecorGrid(filter = '') {
   const grid = $('#decor-grid');
   const empty = $('#decor-empty');
-  const selectedWrap = $('#decor-selected');
   const q = filter.trim().toLowerCase();
   grid.innerHTML = '';
-
-  // Selected pills (easy to see / remove on phone)
-  if (selectedWrap) {
-    selectedWrap.innerHTML = '';
-    if (selectedDecors.size === 0) {
-      selectedWrap.hidden = true;
-    } else {
-      selectedWrap.hidden = false;
-      [...selectedDecors].forEach((name) => {
-        const decor = DECOR_MAPPINGS.find((d) => d.name === name);
-        const pill = document.createElement('button');
-        pill.type = 'button';
-        pill.className = 'decor-pill';
-        pill.title = 'Remove ' + name;
-        pill.innerHTML = `${decor?.icon || ''} ${name} <span class="x">×</span>`;
-        pill.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          selectedDecors.delete(name);
-          updateFindButton();
-          buildDecorGrid($('#decor-filter').value);
-        });
-        selectedWrap.appendChild(pill);
-      });
-    }
-  }
 
   const matches = DECOR_MAPPINGS.filter((d) => {
     if (!q) return true;
@@ -823,40 +826,14 @@ function buildDecorGrid(filter = '') {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'decor-chip' + (on ? ' is-selected' : '');
+    btn.dataset.decor = d.name;
     btn.setAttribute('role', 'option');
     btn.setAttribute('aria-selected', on ? 'true' : 'false');
     btn.title = (d.costume || d.name) + ' — tap to toggle';
     btn.innerHTML = `<span class="swatch" style="background:${d.color}"></span><span class="name">${d.icon} ${d.name}</span>`;
-
-    let down = null;
-    btn.addEventListener(
-      'pointerdown',
-      (e) => {
-        down = { x: e.clientX, y: e.clientY, id: e.pointerId };
-      },
-      { passive: true }
-    );
-    btn.addEventListener(
-      'pointerup',
-      (e) => {
-        if (!down || down.id !== e.pointerId) return;
-        const moved =
-          Math.abs(e.clientX - down.x) > 14 || Math.abs(e.clientY - down.y) > 14;
-        down = null;
-        if (moved) return; // scrolling the list, not a tap
-        if (e.pointerType === 'mouse' && e.button !== 0) return;
-        e.preventDefault();
-        e.stopPropagation();
-        expandPanelForDecor();
-        toggleDecor(d.name);
-      },
-      { passive: false }
-    );
-    btn.addEventListener('pointercancel', () => {
-      down = null;
-    });
     grid.appendChild(btn);
   });
+  paintSelectedPills();
   updateFindButton();
 }
 
@@ -956,32 +933,7 @@ async function loadLikeCount() {
 }
 
 function bindSupportUi() {
-  document.querySelectorAll('a.coffee-btn').forEach((a) => {
-    a.href = SUPPORT.coffeeUrl;
-  });
-
-  const onLike = async () => {
-    const next = !isLiked();
-    setLiked(next);
-    paintLikeUi();
-    // Bump visible count optimistically
-    document.querySelectorAll('.support-count, #like-count, .like-count-panel').forEach((el) => {
-      const n = parseInt(el.textContent, 10) || 0;
-      el.textContent = String(Math.max(0, n + (next ? 1 : -1)) || (next ? 1 : 0));
-    });
-    if (next) {
-      // Encourage a GitHub star (persistent public like)
-      window.open(`https://github.com/${SUPPORT.githubRepo}`, '_blank', 'noopener,noreferrer');
-      setStatus('Thanks for the like — starring the GitHub repo helps a lot!');
-    } else {
-      setStatus('Like removed.');
-    }
-  };
-
-  $('#btn-like')?.addEventListener('click', onLike);
-  $('#btn-like-panel')?.addEventListener('click', onLike);
-  paintLikeUi(0);
-  loadLikeCount();
+  // Support buttons removed from UI — keep no-op so older caches don't break
 }
 
 function bindPanelSheet() {
@@ -1028,6 +980,21 @@ function bindUi() {
   buildDecorGrid();
   bindSupportUi();
   bindPanelSheet();
+
+  // Event delegation — survives list rebuilds and works reliably on mobile
+  $('#decor-grid')?.addEventListener('click', (e) => {
+    const chip = e.target.closest('.decor-chip');
+    if (!chip) return;
+    e.preventDefault();
+    expandPanelForDecor();
+    toggleDecor(chip.dataset.decor);
+  });
+  $('#decor-selected')?.addEventListener('click', (e) => {
+    const pill = e.target.closest('.decor-pill');
+    if (!pill) return;
+    e.preventDefault();
+    toggleDecor(pill.dataset.decor);
+  });
 
   $('#decor-filter').addEventListener('input', (e) => buildDecorGrid(e.target.value));
   $('#decor-filter').addEventListener('focus', () => expandPanelForDecor());

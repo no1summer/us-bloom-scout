@@ -323,7 +323,6 @@ input[type="search"]:focus {
   background: rgba(255,255,255,0.55);
   padding: 0.65rem;
   overflow: hidden;
-  /* Prefer flex grow so chips keep a usable tap area */
   flex: 1 1 auto;
 }
 
@@ -378,16 +377,16 @@ input[type="search"]:focus {
 .decor-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.4rem;
-  max-height: 168px;
-  min-height: 120px;
+  gap: 0.45rem;
+  max-height: min(48vh, 420px);
+  min-height: 240px;
   overflow-x: hidden;
   overflow-y: auto;
   margin: 0;
-  padding: 0.1rem 0.15rem 0.25rem 0;
+  padding: 0.15rem 0.2rem 0.35rem 0;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  touch-action: manipulation;
+  touch-action: pan-y;
   flex: 1 1 auto;
 }
 .decor-empty {
@@ -419,6 +418,7 @@ input[type="search"]:focus {
   touch-action: manipulation;
   position: relative;
   z-index: 1;
+  -webkit-tap-highlight-color: rgba(63,154,69,0.25);
 }
 .decor-chip:active {
   background: rgba(111,191,74,0.22);
@@ -615,8 +615,6 @@ input[type="search"]:focus {
     padding: 0.5rem 0.75rem;
   }
   .brand-text p { display: none; }
-  .support-label { display: none; }
-  .support-row-panel .support-label { display: inline; }
 
   .stage {
     margin: 0;
@@ -636,8 +634,7 @@ input[type="search"]:focus {
     right: 0;
     bottom: 0;
     width: auto;
-    /* Tall enough by default that decor chips are actually tappable */
-    max-height: min(72dvh, 640px);
+    max-height: min(88dvh, 760px);
     border-radius: 20px 20px 0 0;
     border-left: none;
     border-right: none;
@@ -646,61 +643,63 @@ input[type="search"]:focus {
     transition: max-height 0.28s ease;
   }
   .panel.is-expanded {
-    max-height: min(88dvh, 920px);
+    max-height: min(92dvh, 920px);
   }
   .panel.is-collapsed {
-    max-height: 34dvh;
+    max-height: 30dvh;
   }
   .panel-handle { display: block; flex: 0 0 auto; }
   .panel-scroll {
-    padding: 0.25rem 0.85rem 0.5rem;
+    padding: 0.2rem 0.75rem 0.35rem;
     overflow: auto;
     flex: 1 1 auto;
     min-height: 0;
   }
   .panel-dock {
-    padding: 0.5rem 0.85rem calc(0.65rem + var(--safe-bottom));
+    padding: 0.45rem 0.75rem calc(0.55rem + var(--safe-bottom));
   }
 
-  .hint {
-    font-size: 0.72rem;
-  }
+  .hint { display: none; }
 
   .decor-picker {
-    /* Must keep room for the chip list — this was collapsing to ~0px before */
     flex: 1 1 auto;
-    min-height: 220px;
+    min-height: 52dvh;
     max-height: none;
   }
 
   .decor-grid {
     grid-template-columns: 1fr;
     flex: 1 1 auto;
-    min-height: 160px;
-    max-height: min(42dvh, 360px);
+    min-height: 46dvh;
+    max-height: none;
+    height: 46dvh;
+  }
+
+  .results {
+    max-height: 28vh;
   }
 
   .leaflet-bottom.leaflet-right {
-    bottom: calc(min(72dvh, 640px) + 8px);
+    bottom: calc(min(88dvh, 760px) + 8px);
     transition: bottom 0.28s ease;
   }
   .stage:has(.panel.is-expanded) .leaflet-bottom.leaflet-right {
-    bottom: calc(min(88dvh, 920px) + 8px);
+    bottom: calc(min(92dvh, 920px) + 8px);
   }
   .stage:has(.panel.is-collapsed) .leaflet-bottom.leaflet-right {
-    bottom: calc(34dvh + 8px);
+    bottom: calc(30dvh + 8px);
   }
 
   .leaflet-control-attribution {
     max-width: 55vw;
     font-size: 9px !important;
-    margin-bottom: calc(min(72dvh, 640px) + 4px) !important;
+    margin-bottom: calc(min(88dvh, 760px) + 4px) !important;
   }
   .stage:has(.panel.is-expanded) .leaflet-control-attribution {
-    margin-bottom: calc(min(88dvh, 920px) + 4px) !important;
+    margin-bottom: calc(min(92dvh, 920px) + 4px) !important;
   }
   .stage:has(.panel.is-collapsed) .leaflet-control-attribution {
-    margin-bottom: calc(34dvh + 4px) !important;
+    margin-bottom: calc(30dvh + 4px) !important;
   }
 }
 
@@ -731,25 +730,14 @@ input[type="search"]:focus {
           <p>Find Pikmin Bloom decor anywhere in the US</p>
         </div>
       </div>
-      <div class="support-row" aria-label="Support">
-        <button type="button" id="btn-like" class="support-btn like-btn" aria-pressed="false" title="Like this project">
-          <span class="support-ico" aria-hidden="true">♡</span>
-          <span class="support-label">Like</span>
-          <span id="like-count" class="support-count">0</span>
-        </button>
-        <a id="btn-coffee" class="support-btn coffee-btn" href="https://www.buymeacoffee.com/no1summer" target="_blank" rel="noopener noreferrer" title="Buy me a coffee">
-          <span class="support-ico" aria-hidden="true">☕</span>
-          <span class="support-label">Coffee</span>
-        </a>
-      </div>
     </header>
 
     <main class="stage">
       <div id="map" role="application" aria-label="Decor location map"></div>
       <div class="map-veil" aria-hidden="true"></div>
 
-      <aside class="panel" id="panel">
-        <button type="button" class="panel-handle" id="panel-handle" aria-label="Expand or collapse panel" aria-expanded="false">
+      <aside class="panel is-expanded" id="panel">
+        <button type="button" class="panel-handle" id="panel-handle" aria-label="Expand or collapse panel" aria-expanded="true">
           <span class="handle-bar" aria-hidden="true"></span>
         </button>
         <div class="panel-glow" aria-hidden="true"></div>
@@ -773,10 +761,10 @@ input[type="search"]:focus {
             <label class="field-label" for="decor-filter">Decor types (multi-select)</label>
             <input
               id="decor-filter"
-              type="text"
+              type="search"
               inputmode="search"
               enterkeyhint="done"
-              placeholder="Search types: park, sushi…"
+              placeholder="Filter: roadside, park, sushi…"
               autocomplete="off"
               autocorrect="off"
               spellcheck="false"
@@ -793,18 +781,6 @@ input[type="search"]:focus {
             <span id="result-count">0 places</span>
           </div>
           <ul id="results" class="results"></ul>
-
-          <div class="support-row support-row-panel">
-            <button type="button" id="btn-like-panel" class="support-btn like-btn" aria-pressed="false">
-              <span class="support-ico" aria-hidden="true">♡</span>
-              <span class="support-label">Like</span>
-              <span class="like-count-panel support-count">0</span>
-            </button>
-            <a class="support-btn coffee-btn" href="https://www.buymeacoffee.com/no1summer" target="_blank" rel="noopener noreferrer">
-              <span class="support-ico" aria-hidden="true">☕</span>
-              <span class="support-label">Buy me a coffee</span>
-            </a>
-          </div>
 
           <footer class="panel-foot">
             US-first geocoding and map search. OSM tags approximate in-game decor; Bloom may still differ.
@@ -861,6 +837,67 @@ input[type="search"]:focus {
 const DETECTOR_RANGE = 100;
 
 const DECOR_MAPPINGS = [
+  // Roadside first so it is easy to find in the picker (in-game fallback type)
+  {
+    name: 'Roadside',
+    costume: 'Sticker / Coin',
+    icon: '🪧',
+    image: 'Decor Roadside Sticker.png',
+    mapIcon: 'MapIcon_Roadside.png',
+    color: '#78909C',
+    isResidual: true,
+    tags: [
+      { key: 'amenity', value: 'bank' },
+      { key: 'amenity', value: 'fuel' },
+      { key: 'amenity', value: 'charging_station' },
+      { key: 'amenity', value: 'school' },
+      { key: 'amenity', value: 'kindergarten' },
+      { key: 'amenity', value: 'place_of_worship' },
+      { key: 'amenity', value: 'community_centre' },
+      { key: 'amenity', value: 'townhall' },
+      { key: 'amenity', value: 'courthouse' },
+      { key: 'amenity', value: 'fire_station' },
+      { key: 'amenity', value: 'police' },
+      { key: 'amenity', value: 'hospital' },
+      { key: 'amenity', value: 'clinic' },
+      { key: 'amenity', value: 'dentists' },
+      { key: 'amenity', value: 'dentist' },
+      { key: 'amenity', value: 'doctors' },
+      { key: 'amenity', value: 'veterinary' },
+      { key: 'amenity', value: 'car_wash' },
+      { key: 'amenity', value: 'car_rental' },
+      { key: 'amenity', value: 'marketplace' },
+      { key: 'amenity', value: 'social_facility' },
+      { key: 'amenity', value: 'shelter' },
+      { key: 'shop', value: 'gift' },
+      { key: 'shop', value: 'florist' },
+      { key: 'shop', value: 'bicycle' },
+      { key: 'shop', value: 'car' },
+      { key: 'shop', value: 'car_repair' },
+      { key: 'shop', value: 'furniture' },
+      { key: 'shop', value: 'pet' },
+      { key: 'shop', value: 'mobile_phone' },
+      { key: 'shop', value: 'optician' },
+      { key: 'shop', value: 'alcohol' },
+      { key: 'shop', value: 'wine' },
+      { key: 'shop', value: 'butcher' },
+      { key: 'shop', value: 'greengrocer' },
+      { key: 'shop', value: 'deli' },
+      { key: 'shop', value: 'tobacco' },
+      { key: 'shop', value: 'newsagent' },
+      { key: 'shop', value: 'travel_agency' },
+      { key: 'shop', value: 'yes' },
+      { key: 'tourism', value: 'attraction' },
+      { key: 'tourism', value: 'information' },
+      { key: 'leisure', value: 'playground' },
+      { key: 'leisure', value: 'sports_centre' },
+      { key: 'leisure', value: 'fitness_centre' },
+      { key: 'leisure', value: 'pitch' },
+      { key: 'highway', value: 'rest_area' },
+      { key: 'highway', value: 'services' }
+    ]
+  },
+
   // ========== FOOD & DRINK ==========
   {
     name: 'Restaurant',
@@ -1302,71 +1339,6 @@ const DECOR_MAPPINGS = [
       [{ key: 'building', value: 'shrine'  }, { key: 'religion', value: 'buddhist' }],
       [{ key: 'building', value: 'temple'  }, { key: 'religion', value: 'shinto'   }],
       [{ key: 'building', value: 'temple'  }, { key: 'religion', value: 'buddhist' }],
-    ]
-  },
-
-  // ========== FALLBACK ==========
-  // In-game Roadside = named place that does NOT match a specific decor category.
-  // We approximate common residual POIs; matchDecorCategories only assigns
-  // Roadside when no other mapped type matched (and the place has a name).
-  {
-    name: 'Roadside',
-    costume: 'Sticker / Coin',
-    icon: '🪧',
-    image: 'Decor Roadside Sticker.png',
-    mapIcon: 'MapIcon_Roadside.png',
-    color: '#78909C',
-    isResidual: true,
-    tags: [
-      { key: 'amenity', value: 'bank' },
-      { key: 'amenity', value: 'fuel' },
-      { key: 'amenity', value: 'charging_station' },
-      { key: 'amenity', value: 'school' },
-      { key: 'amenity', value: 'kindergarten' },
-      { key: 'amenity', value: 'college' },
-      { key: 'amenity', value: 'place_of_worship' },
-      { key: 'amenity', value: 'community_centre' },
-      { key: 'amenity', value: 'townhall' },
-      { key: 'amenity', value: 'courthouse' },
-      { key: 'amenity', value: 'fire_station' },
-      { key: 'amenity', value: 'police' },
-      { key: 'amenity', value: 'hospital' },
-      { key: 'amenity', value: 'clinic' },
-      { key: 'amenity', value: 'dentists' },
-      { key: 'amenity', value: 'dentist' },
-      { key: 'amenity', value: 'doctors' },
-      { key: 'amenity', value: 'veterinary' },
-      { key: 'amenity', value: 'car_wash' },
-      { key: 'amenity', value: 'car_rental' },
-      { key: 'amenity', value: 'marketplace' },
-      { key: 'amenity', value: 'social_facility' },
-      { key: 'amenity', value: 'shelter' },
-      { key: 'shop', value: 'gift' },
-      { key: 'shop', value: 'florist' },
-      { key: 'shop', value: 'bicycle' },
-      { key: 'shop', value: 'car' },
-      { key: 'shop', value: 'car_repair' },
-      { key: 'shop', value: 'furniture' },
-      { key: 'shop', value: 'pet' },
-      { key: 'shop', value: 'mobile_phone' },
-      { key: 'shop', value: 'optician' },
-      { key: 'shop', value: 'alcohol' },
-      { key: 'shop', value: 'wine' },
-      { key: 'shop', value: 'butcher' },
-      { key: 'shop', value: 'greengrocer' },
-      { key: 'shop', value: 'deli' },
-      { key: 'shop', value: 'tobacco' },
-      { key: 'shop', value: 'newsagent' },
-      { key: 'shop', value: 'travel_agency' },
-      { key: 'shop', value: 'yes' },
-      { key: 'tourism', value: 'attraction' },
-      { key: 'tourism', value: 'information' },
-      { key: 'leisure', value: 'playground' },
-      { key: 'leisure', value: 'sports_centre' },
-      { key: 'leisure', value: 'fitness_centre' },
-      { key: 'leisure', value: 'pitch' },
-      { key: 'highway', value: 'rest_area' },
-      { key: 'highway', value: 'services' }
     ]
   }
 ];
@@ -2312,41 +2284,44 @@ function toggleDecor(name) {
   if (selectedDecors.has(name)) selectedDecors.delete(name);
   else selectedDecors.add(name);
   updateFindButton();
-  buildDecorGrid($('#decor-filter')?.value || '');
+  paintSelectedPills();
+  // Update chip state in place — rebuilding the whole grid breaks mobile taps
+  const chip = [...document.querySelectorAll('#decor-grid .decor-chip')].find(
+    (el) => el.dataset.decor === name
+  );
+  if (chip) {
+    const on = selectedDecors.has(name);
+    chip.classList.toggle('is-selected', on);
+    chip.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+}
+
+function paintSelectedPills() {
+  const selectedWrap = $('#decor-selected');
+  if (!selectedWrap) return;
+  selectedWrap.innerHTML = '';
+  if (selectedDecors.size === 0) {
+    selectedWrap.hidden = true;
+    return;
+  }
+  selectedWrap.hidden = false;
+  [...selectedDecors].forEach((name) => {
+    const decor = DECOR_MAPPINGS.find((d) => d.name === name);
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'decor-pill';
+    pill.dataset.decor = name;
+    pill.title = 'Remove ' + name;
+    pill.innerHTML = `${decor?.icon || ''} ${name} <span class="x">×</span>`;
+    selectedWrap.appendChild(pill);
+  });
 }
 
 function buildDecorGrid(filter = '') {
   const grid = $('#decor-grid');
   const empty = $('#decor-empty');
-  const selectedWrap = $('#decor-selected');
   const q = filter.trim().toLowerCase();
   grid.innerHTML = '';
-
-  // Selected pills (easy to see / remove on phone)
-  if (selectedWrap) {
-    selectedWrap.innerHTML = '';
-    if (selectedDecors.size === 0) {
-      selectedWrap.hidden = true;
-    } else {
-      selectedWrap.hidden = false;
-      [...selectedDecors].forEach((name) => {
-        const decor = DECOR_MAPPINGS.find((d) => d.name === name);
-        const pill = document.createElement('button');
-        pill.type = 'button';
-        pill.className = 'decor-pill';
-        pill.title = 'Remove ' + name;
-        pill.innerHTML = `${decor?.icon || ''} ${name} <span class="x">×</span>`;
-        pill.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          selectedDecors.delete(name);
-          updateFindButton();
-          buildDecorGrid($('#decor-filter').value);
-        });
-        selectedWrap.appendChild(pill);
-      });
-    }
-  }
 
   const matches = DECOR_MAPPINGS.filter((d) => {
     if (!q) return true;
@@ -2363,40 +2338,14 @@ function buildDecorGrid(filter = '') {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'decor-chip' + (on ? ' is-selected' : '');
+    btn.dataset.decor = d.name;
     btn.setAttribute('role', 'option');
     btn.setAttribute('aria-selected', on ? 'true' : 'false');
     btn.title = (d.costume || d.name) + ' — tap to toggle';
     btn.innerHTML = `<span class="swatch" style="background:${d.color}"></span><span class="name">${d.icon} ${d.name}</span>`;
-
-    let down = null;
-    btn.addEventListener(
-      'pointerdown',
-      (e) => {
-        down = { x: e.clientX, y: e.clientY, id: e.pointerId };
-      },
-      { passive: true }
-    );
-    btn.addEventListener(
-      'pointerup',
-      (e) => {
-        if (!down || down.id !== e.pointerId) return;
-        const moved =
-          Math.abs(e.clientX - down.x) > 14 || Math.abs(e.clientY - down.y) > 14;
-        down = null;
-        if (moved) return; // scrolling the list, not a tap
-        if (e.pointerType === 'mouse' && e.button !== 0) return;
-        e.preventDefault();
-        e.stopPropagation();
-        expandPanelForDecor();
-        toggleDecor(d.name);
-      },
-      { passive: false }
-    );
-    btn.addEventListener('pointercancel', () => {
-      down = null;
-    });
     grid.appendChild(btn);
   });
+  paintSelectedPills();
   updateFindButton();
 }
 
@@ -2496,32 +2445,7 @@ async function loadLikeCount() {
 }
 
 function bindSupportUi() {
-  document.querySelectorAll('a.coffee-btn').forEach((a) => {
-    a.href = SUPPORT.coffeeUrl;
-  });
-
-  const onLike = async () => {
-    const next = !isLiked();
-    setLiked(next);
-    paintLikeUi();
-    // Bump visible count optimistically
-    document.querySelectorAll('.support-count, #like-count, .like-count-panel').forEach((el) => {
-      const n = parseInt(el.textContent, 10) || 0;
-      el.textContent = String(Math.max(0, n + (next ? 1 : -1)) || (next ? 1 : 0));
-    });
-    if (next) {
-      // Encourage a GitHub star (persistent public like)
-      window.open(`https://github.com/${SUPPORT.githubRepo}`, '_blank', 'noopener,noreferrer');
-      setStatus('Thanks for the like — starring the GitHub repo helps a lot!');
-    } else {
-      setStatus('Like removed.');
-    }
-  };
-
-  $('#btn-like')?.addEventListener('click', onLike);
-  $('#btn-like-panel')?.addEventListener('click', onLike);
-  paintLikeUi(0);
-  loadLikeCount();
+  // Support buttons removed from UI — keep no-op so older caches don't break
 }
 
 function bindPanelSheet() {
@@ -2568,6 +2492,21 @@ function bindUi() {
   buildDecorGrid();
   bindSupportUi();
   bindPanelSheet();
+
+  // Event delegation — survives list rebuilds and works reliably on mobile
+  $('#decor-grid')?.addEventListener('click', (e) => {
+    const chip = e.target.closest('.decor-chip');
+    if (!chip) return;
+    e.preventDefault();
+    expandPanelForDecor();
+    toggleDecor(chip.dataset.decor);
+  });
+  $('#decor-selected')?.addEventListener('click', (e) => {
+    const pill = e.target.closest('.decor-pill');
+    if (!pill) return;
+    e.preventDefault();
+    toggleDecor(pill.dataset.decor);
+  });
 
   $('#decor-filter').addEventListener('input', (e) => buildDecorGrid(e.target.value));
   $('#decor-filter').addEventListener('focus', () => expandPanelForDecor());
