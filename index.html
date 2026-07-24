@@ -63,14 +63,14 @@
         </section>
 
         <section class="mode-pane" data-pane="browse">
-          <label class="field-label" for="decor-filter">Decor type</label>
+          <label class="field-label" for="decor-filter">Decor types (multi-select)</label>
           <input id="decor-filter" type="search" placeholder="Filter: park, sushi, station…" />
-          <div id="decor-grid" class="decor-grid" role="listbox" aria-label="Decor categories"></div>
+          <div id="decor-grid" class="decor-grid" role="listbox" aria-multiselectable="true" aria-label="Decor categories"></div>
           <div class="browse-actions">
             <button type="button" id="btn-find" class="primary-btn" disabled>Show in map view</button>
             <button type="button" id="btn-clear" class="ghost-btn">Clear</button>
           </div>
-          <p class="hint" style="margin-top:0.45rem">Pan/zoom to your area first (or search a ZIP), then show that decor type in view.</p>
+          <p class="hint" style="margin-top:0.45rem">Tap multiple types. Search a ZIP or pan the map first, then show them in view.</p>
         </section>
 
         <div class="status" id="status" aria-live="polite"></div>

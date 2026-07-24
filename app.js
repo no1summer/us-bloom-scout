@@ -32,7 +32,8 @@ let markersLayer;
 let centerMarker;
 let rangeCircle;
 let mode = 'nearby';
-let selectedDecor = null;
+/** @type {Set<string>} */
+let selectedDecors = new Set();
 let activeAbort = null;
 let lastCenter = { lat: DEFAULT.lat, lon: DEFAULT.lon };
 /** Active search/area label for status messages */
@@ -122,9 +123,10 @@ function filterSeedAround(lat, lon, radiusM) {
   });
 }
 
-function filterSeedByDecorInBbox(decorName, bbox) {
+function filterSeedByDecorInBbox(decorNames, bbox) {
   if (!seedCache?.elements || !seedCache.bbox) return null;
-  // Only use seed when viewport overlaps seed area substantially
+  const names = new Set(decorNames);
+  // Only use seed when viewport overlaps seed area
   const overlap =
     bbox.south < seedCache.bbox.north &&
     bbox.north > seedCache.bbox.south &&
@@ -135,8 +137,17 @@ function filterSeedByDecorInBbox(decorName, bbox) {
     const pos = elementLatLon(el);
     if (!pos || !el.tags) return false;
     if (!inBbox(pos.lat, pos.lon, bbox)) return false;
-    return matchDecorCategories(el.tags).some((d) => d.name === decorName);
+    return matchDecorCategories(el.tags).some((d) => names.has(d.name));
   });
+}
+
+function updateFindButton() {
+  const btn = $('#btn-find');
+  const n = selectedDecors.size;
+  btn.disabled = n === 0;
+  if (n === 0) btn.textContent = 'Show in map view';
+  else if (n === 1) btn.textContent = 'Show 1 type in view';
+  else btn.textContent = `Show ${n} types in view`;
 }
 
 async function queryOverpass(query, { timeoutMs = 28000, signal } = {}) {
@@ -390,30 +401,39 @@ async function scanNearby(lat, lon, { fly = true, zoom = 16 } = {}) {
   }
 }
 
-/** Find selected decor in the current map view (any ZIP / city / pan) */
-async function browseDecorInView(decorName) {
+/** Find selected decor type(s) in the current map view (any ZIP / city / pan) */
+async function browseDecorInView(decorNames) {
+  const names = [...decorNames];
+  if (!names.length) return;
   const signal = cancelInFlight();
-  const decor = DECOR_MAPPINGS.find((d) => d.name === decorName);
-  if (!decor) return;
 
   const bbox = mapViewportBbox();
-  setStatus(`Finding ${decorName} in current map view…`, true);
+  const label =
+    names.length === 1 ? names[0] : `${names.length} decor types`;
+  setStatus(`Finding ${label} in current map view…`, true);
   clearMapOverlays({ keepMarkers: false });
 
   try {
-    let elements = filterSeedByDecorInBbox(decorName, bbox);
+    let elements = filterSeedByDecorInBbox(names, bbox);
     let source = 'cache';
     if (!elements) {
-      const query = buildOverpassBboxQuery(bbox.south, bbox.west, bbox.north, bbox.east, decorName);
-      elements = await queryOverpass(query, { signal, timeoutMs: 35000 });
+      const query = buildOverpassBboxQueryMulti(
+        bbox.south,
+        bbox.west,
+        bbox.north,
+        bbox.east,
+        names
+      );
+      elements = await queryOverpass(query, { signal, timeoutMs: 40000 });
       source = 'live';
     }
 
+    const nameSet = new Set(names);
     const origin = map.getCenter();
     const items = elementsToResults(elements, {
       lat: origin.lat,
       lon: origin.lng,
-    }).filter((i) => i.decor.name === decorName);
+    }).filter((i) => nameSet.has(i.decor.name));
 
     plotResults(items);
     renderResults(items);
@@ -422,12 +442,12 @@ async function browseDecorInView(decorName) {
       const group = L.featureGroup(items.map((i) => i.marker));
       map.fitBounds(group.getBounds().pad(0.12), { maxZoom: 15, animate: true });
       setStatus(
-        `${items.length} ${decorName} location${items.length === 1 ? '' : 's'} in view` +
+        `${items.length} place${items.length === 1 ? '' : 's'} · ${label} in view` +
           (source === 'cache' ? ' · cached' : '') +
           `.`
       );
     } else {
-      setStatus(`No ${decorName} spots tagged in this map view on OSM.`);
+      setStatus(`No matching spots for ${label} in this map view on OSM.`);
     }
   } catch (err) {
     if (err.name === 'AbortError') return;
@@ -447,20 +467,23 @@ function buildDecorGrid(filter = '') {
       (d.costume && d.costume.toLowerCase().includes(q))
     );
   }).forEach((d) => {
+    const on = selectedDecors.has(d.name);
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'decor-chip' + (selectedDecor === d.name ? ' is-selected' : '');
+    btn.className = 'decor-chip' + (on ? ' is-selected' : '');
     btn.setAttribute('role', 'option');
-    btn.setAttribute('aria-selected', selectedDecor === d.name ? 'true' : 'false');
-    btn.title = d.costume || d.name;
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    btn.title = (d.costume || d.name) + ' — click to toggle';
     btn.innerHTML = `<span class="swatch" style="background:${d.color}"></span><span class="name">${d.icon} ${d.name}</span>`;
     btn.addEventListener('click', () => {
-      selectedDecor = d.name;
-      $('#btn-find').disabled = false;
+      if (selectedDecors.has(d.name)) selectedDecors.delete(d.name);
+      else selectedDecors.add(d.name);
+      updateFindButton();
       buildDecorGrid($('#decor-filter').value);
     });
     grid.appendChild(btn);
   });
+  updateFindButton();
 }
 
 function setMode(next) {
@@ -509,13 +532,13 @@ function bindUi() {
   $('#decor-filter').addEventListener('input', (e) => buildDecorGrid(e.target.value));
 
   $('#btn-find').addEventListener('click', () => {
-    if (selectedDecor) browseDecorInView(selectedDecor);
+    if (selectedDecors.size) browseDecorInView(selectedDecors);
   });
 
   $('#btn-clear').addEventListener('click', () => {
     cancelInFlight();
-    selectedDecor = null;
-    $('#btn-find').disabled = true;
+    selectedDecors.clear();
+    updateFindButton();
     buildDecorGrid($('#decor-filter').value);
     clearMapOverlays();
     renderResults([]);
