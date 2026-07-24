@@ -386,11 +386,19 @@ function pauseAutoZip(ms = 1200) {
 }
 
 /** Update the search box + active area from a map position */
-async function syncZipFromLatLon(lat, lon, { quiet = false } = {}) {
+async function syncZipFromLatLon(lat, lon, { quiet = false, placePin = !quiet } = {}) {
   try {
     const hit = await reverseGeocode(lat, lon);
     activeAreaLabel = hit.label;
     activeSearchBbox = areaAround(lat, lon);
+    if (placePin) {
+      pauseAutoZip(1200);
+      setAreaPin(lat, lon, {
+        zoom: map.getZoom(),
+        fly: false,
+        bbox: activeSearchBbox,
+      });
+    }
     if (hit.zip) {
       if (hit.zip !== lastShownZip) {
         $('#address').value = hit.zip;
@@ -686,8 +694,7 @@ function initMap() {
     const { lat, lng } = e.latlng;
     pauseAutoZip(1500);
     activeSearchBbox = areaAround(lat, lng);
-    setAreaPin(lat, lng, { zoom: Math.max(map.getZoom(), 14), fly: false });
-    await syncZipFromLatLon(lat, lng);
+    await syncZipFromLatLon(lat, lng, { quiet: false, placePin: true });
   });
 
   map.on('moveend', () => scheduleZipFromMapCenter());
